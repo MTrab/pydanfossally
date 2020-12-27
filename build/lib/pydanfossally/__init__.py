@@ -28,9 +28,5 @@ class DanfossAlly:
             self._authorized = False
             return None
 
-        self._token = token
         self._authorized = True
         return True
-
-    async def getDeviceList(self):
-        devices = self._api.get_devices(self._token)

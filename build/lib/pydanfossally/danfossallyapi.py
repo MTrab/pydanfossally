@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 API_HOST = "https://api.danfoss.com"
 
@@ -28,11 +27,10 @@ class DanfossAllyAPI():
 
     def getToken(self, key, secret):
         """Get token."""
+        import json
         import base64
 
-        encStr = key + ':' + secret
-        encBytes = encStr.encode('ascii')
-        encoded = base64.b64encode(encBytes).decode('ascii')
+        encoded = base64.b64encode(key + ':' + secret)
 
         header_data = {}
         header_data['Content-Type'] = 'application/x-www-form-urlencoded'
@@ -42,20 +40,3 @@ class DanfossAllyAPI():
         post_data = 'grant_type=client_credentials'
 
         callData = self._call('/oauth2/token', header_data, post_data)
-
-        if callData is False:
-            return False
-
-        return callData['access_token']
-
-    def get_devices(self, token):
-        """Get list of all devices."""
-        print(token)
-        header_data = {}
-        header_data['Accept'] = 'application/json'
-        header_data['Authorization'] = 'Bearer ' + token
-
-        callData = self._call('/ally/devices', header_data)
-
-        print(callData)
-
