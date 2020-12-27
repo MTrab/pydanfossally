@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>f47f209c-bd8c-4024-9a3e-c1902b910f85</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>pydanfossally.py</StartupFile>
+    <StartupFile>pydanfossally\__init__.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -21,7 +21,24 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="pydanfossally.py" />
+    <Compile Include="pydanfossally\danfossallyapi.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="setup.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="pydanfossally\__init__.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include=".gitignore">
+      <SubType>Code</SubType>
+    </Content>
+    <Content Include="README.md">
+      <SubType>Code</SubType>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="pydanfossally\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
