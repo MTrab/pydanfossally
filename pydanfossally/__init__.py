@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 
 
 class DanfossAlly:
@@ -29,7 +29,7 @@ class DanfossAlly:
         
         if token is False:
             self._authorized = False
-            return None
+            return False
 
         self._token = token
         self._authorized = True
