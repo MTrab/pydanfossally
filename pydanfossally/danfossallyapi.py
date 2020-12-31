@@ -20,8 +20,13 @@ class DanfossAllyAPI():
 
             if not req.ok:
                 return False
+        except TimeoutError:
+            print("Timeout connecting to Danfoss Ally API")
+            raise
+            return False
         except:
-            raise("Timeout connecting")
+            print("Unexpected error:", sys.exc_info()[0])
+            raise
             return False
 
         return req.json()
