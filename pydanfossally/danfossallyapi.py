@@ -8,7 +8,7 @@ class DanfossAllyAPI():
     def __init__(self):
         """Init API."""
 
-    def _call(self, path, headers_data, payload=None):
+    async def _call(self, path, headers_data, payload=None):
         """Do the actual API call."""
         import requests
 
@@ -31,9 +31,11 @@ class DanfossAllyAPI():
 
         return req.json()
 
-    def getToken(self, key, secret):
+    async def getToken(self, key, secret):
         """Get token."""
         import base64
+
+        #loop = asyncio.get_running_loop()
 
         encStr = key + ':' + secret
         encBytes = encStr.encode('ascii')
@@ -46,31 +48,33 @@ class DanfossAllyAPI():
 
         post_data = 'grant_type=client_credentials'
 
-        callData = self._call('/oauth2/token', header_data, post_data)
+        callData = await self._call('/oauth2/token', header_data, post_data)
 
         if callData is False:
             return False
 
         return callData['access_token']
 
-    def get_devices(self, token):
+    async def get_devices(self, token):
         """Get list of all devices."""
 
         header_data = {}
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + token
 
-        callData = self._call('/ally/devices', header_data)
+        callData = await self._call('/ally/devices', header_data)
 
         return callData
 
-    def get_device(self, token, device_id):
+    async def get_device(self, token, device_id):
         """Get device details."""
+
+        #loop = asyncio.get_running_loop()
 
         header_data = {}
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + token
 
-        callData = self._call('/ally/devices/' + device_id, header_data)
+        callData = await self._call('/ally/devices/' + device_id, header_data)
 
         return callData

@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.5'
+__version__ = '0.0.6'
 
 
 class DanfossAlly:
@@ -20,12 +20,15 @@ class DanfossAlly:
 
     async def initialize(self, key, secret):
         """Authorize and initialize the connection."""
-        loop = asyncio.get_running_loop()
+        #loop = asyncio.get_running_loop()
+        self._apikey = key
+        self._apisecret = secret
 
-        token = await loop.run_in_executor(None,
-                                          self._api.getToken,
-                                          key,
-                                          secret)
+        #token = await loop.run_in_executor(None,
+        #                                  self._api.getToken,
+        #                                  key,
+        #                                  secret)
+        token = await self._api.getToken(key, secret)
         
         if token is False:
             self._authorized = False
@@ -37,7 +40,7 @@ class DanfossAlly:
 
     async def getDeviceList(self):
         """Get device list."""
-        devices = self._api.get_devices(self._token)
+        devices = await self._api.get_devices(self._token)
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
@@ -58,4 +61,4 @@ class DanfossAlly:
 
     async def getDevice(self, device_id):
         """Get device data."""
-        device = self._api.get_device(self._token, device_id)
+        device = await self._api.get_device(self._token, device_id)
