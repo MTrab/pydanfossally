@@ -12,22 +12,22 @@ class DanfossAllyAPI():
         """Do the actual API call."""
         import requests
 
-        try:
-            if payload:
-                req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
-            else:
-                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+        #try:
+        if payload:
+            req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
+        else:
+            req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
 
-            if not req.ok:
-                return False
-        except TimeoutError:
-            print("Timeout connecting to Danfoss Ally API")
-            raise
+        if not req.ok:
             return False
-        except:
-            print("Unexpected error occured!")
-            raise
-            return False
+        #except TimeoutError:
+        #    print("Timeout communication with Danfoss Ally API")
+        #    raise
+        #    return False
+        #except:
+        #    print("Unexpected error occured!")
+        #    raise
+        #    return False
 
         return req.json()
 
