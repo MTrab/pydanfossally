@@ -46,7 +46,7 @@ class DanfossAlly:
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
-            self.devices[device['id']]['name'] = strip(device['name'])
+            self.devices[device['id']]['name'] = device['name'].strip()
             self.devices[device['id']]['online'] = device['online']
             self.devices[device['id']]['update'] = device['update_time']
             if 'model' in device:
