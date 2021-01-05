@@ -40,11 +40,13 @@ class DanfossAlly:
 
     async def getDeviceList(self):
         """Get device list."""
+        #loop = asyncio.get_running_loop()
+        #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
         devices = await self._api.get_devices(self._token)
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
-            self.devices[device['id']]['name'] = device['name']
+            self.devices[device['id']]['name'] = strip(device['name'])
             self.devices[device['id']]['online'] = device['online']
             self.devices[device['id']]['update'] = device['update_time']
             if 'model' in device:

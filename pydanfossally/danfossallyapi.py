@@ -35,8 +35,6 @@ class DanfossAllyAPI():
         """Get token."""
         import base64
 
-        #loop = asyncio.get_running_loop()
-
         encStr = key + ':' + secret
         encBytes = encStr.encode('ascii')
         encoded = base64.b64encode(encBytes).decode('ascii')
@@ -68,8 +66,6 @@ class DanfossAllyAPI():
 
     async def get_device(self, token, device_id):
         """Get device details."""
-
-        #loop = asyncio.get_running_loop()
 
         header_data = {}
         header_data['Accept'] = 'application/json'
