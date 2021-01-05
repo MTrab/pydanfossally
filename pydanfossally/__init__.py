@@ -10,26 +10,15 @@ class DanfossAlly:
 
     def __init__(self):
         """Init the API connector variables."""
-        self._apikey =  ''
-        self._apisecret = ''
-        self._token = ''
         self._authorized = False
         self.devices = {}
 
         self._api = DanfossAllyAPI()
 
-    async def _refresh_token(self):
-        if self._refresh_at >= datetime.datetime.now():
-            return False
-
-        expires_in = float(token['expires_in'])
-        self._refresh_at = datetime.datetime.now()
-        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
-
     async def async_initialize(self, key, secret):
         """Authorize and initialize the connection."""
-        self._apikey = key
-        self._apisecret = secret
+        #self._apikey = key
+        #self._apisecret = secret
 
         token = await self._api.async_getToken(key, secret)
         
@@ -37,7 +26,6 @@ class DanfossAlly:
             self._authorized = False
             return False
 
-        self._token = token['token']
         self._authorized = True
         return self._authorized
 
@@ -45,7 +33,7 @@ class DanfossAlly:
         """Get device list."""
         #loop = asyncio.get_running_loop()
         #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
-        devices = self._api.get_devices(self._token)
+        devices = self._api.get_devices()
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
@@ -66,7 +54,7 @@ class DanfossAlly:
 
     async def getDevice(self, device_id):
         """Get device data."""
-        device = await self._api.get_device(self._token, device_id)
+        device = await self._api.get_device(device_id)
 
     @property
     def authorized(self):
