@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.8'
+__version__ = '0.0.9'
 
 
 class DanfossAlly:
@@ -34,6 +34,11 @@ class DanfossAlly:
         #loop = asyncio.get_running_loop()
         #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
         devices = self._api.get_devices()
+
+        if devices is None:
+            raise Exception("No devices loaded, API error?!")
+            return
+
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False

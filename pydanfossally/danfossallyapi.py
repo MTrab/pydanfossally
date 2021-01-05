@@ -52,7 +52,7 @@ class DanfossAllyAPI():
         if self._refresh_at > datetime.datetime.now():
             return False
 
-        await async_getToken()
+        await self.async_getToken()
 
     async def async_getToken(self, key=None, secret=None):
         """Get token."""
