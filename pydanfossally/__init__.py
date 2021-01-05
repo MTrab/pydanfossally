@@ -18,7 +18,7 @@ class DanfossAlly:
 
         self._api = DanfossAllyAPI()
 
-    async def initialize(self, key, secret):
+    async def async_initialize(self, key, secret):
         """Authorize and initialize the connection."""
         #loop = asyncio.get_running_loop()
         self._apikey = key
@@ -28,7 +28,7 @@ class DanfossAlly:
         #                                  self._api.getToken,
         #                                  key,
         #                                  secret)
-        token = await self._api.getToken(key, secret)
+        token = await self._api.async_getToken(key, secret)
         
         if token is False:
             self._authorized = False

@@ -54,7 +54,7 @@ class DanfossAllyAPI():
 
         return req.json()
 
-    async def getToken(self, key, secret):
+    async def async_getToken(self, key, secret):
         """Get token."""
         import base64
 
@@ -87,7 +87,7 @@ class DanfossAllyAPI():
 
         return callData
 
-    async def get_device(self, token, device_id):
+    async def async_get_device(self, token, device_id):
         """Get device details."""
 
         header_data = {}
