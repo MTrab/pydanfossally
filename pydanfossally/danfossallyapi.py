@@ -73,8 +73,12 @@ class DanfossAllyAPI():
 
         if callData is False:
             return False
+        print(callData)
 
-        return callData['access_token']
+        token = {}
+        token['token'] = callData['access_token']
+        token['expires_in'] = callData['expires_in']
+        return token
 
     def get_devices(self, token):
         """Get list of all devices."""

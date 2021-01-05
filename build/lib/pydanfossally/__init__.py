@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.6'
+__version__ = '0.0.7'
 
 
 class DanfossAlly:
@@ -18,7 +18,7 @@ class DanfossAlly:
 
         self._api = DanfossAllyAPI()
 
-    async def initialize(self, key, secret):
+    async def async_initialize(self, key, secret):
         """Authorize and initialize the connection."""
         #loop = asyncio.get_running_loop()
         self._apikey = key
@@ -28,7 +28,7 @@ class DanfossAlly:
         #                                  self._api.getToken,
         #                                  key,
         #                                  secret)
-        token = await self._api.getToken(key, secret)
+        token = await self._api.async_getToken(key, secret)
         
         if token is False:
             self._authorized = False
@@ -38,13 +38,15 @@ class DanfossAlly:
         self._authorized = True
         return True
 
-    async def getDeviceList(self):
+    def getDeviceList(self):
         """Get device list."""
-        devices = await self._api.get_devices(self._token)
+        #loop = asyncio.get_running_loop()
+        #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
+        devices = self._api.get_devices(self._token)
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
-            self.devices[device['id']]['name'] = device['name']
+            self.devices[device['id']]['name'] = device['name'].strip()
             self.devices[device['id']]['online'] = device['online']
             self.devices[device['id']]['update'] = device['update_time']
             if 'model' in device:

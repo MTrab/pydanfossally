@@ -13,6 +13,7 @@ class DanfossAlly:
         self._apikey =  ''
         self._apisecret = ''
         self._token = ''
+        self._expire = ''
         self._authorized = False
         self.devices = {}
 
@@ -20,23 +21,19 @@ class DanfossAlly:
 
     async def async_initialize(self, key, secret):
         """Authorize and initialize the connection."""
-        #loop = asyncio.get_running_loop()
         self._apikey = key
         self._apisecret = secret
 
-        #token = await loop.run_in_executor(None,
-        #                                  self._api.getToken,
-        #                                  key,
-        #                                  secret)
         token = await self._api.async_getToken(key, secret)
         
         if token is False:
             self._authorized = False
             return False
 
-        self._token = token
+        self._token = token['token']
+        self._expire = token['expires_in']
         self._authorized = True
-        return True
+        return self._authorized
 
     def getDeviceList(self):
         """Get device list."""
@@ -64,3 +61,8 @@ class DanfossAlly:
     async def getDevice(self, device_id):
         """Get device data."""
         device = await self._api.get_device(self._token, device_id)
+
+    @property
+    def authorized(self):
+        """Return authorized status."""
+        return self._authorized
