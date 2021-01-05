@@ -8,26 +8,49 @@ class DanfossAllyAPI():
     def __init__(self):
         """Init API."""
 
-    async def _call(self, path, headers_data, payload=None):
+    async def _async_call(self, path, headers_data, payload=None):
+        """Do the actual API call async."""
+        import requests
+
+        try:
+            if payload:
+                req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
+            else:
+                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+
+            if not req.ok:
+                return False
+        except TimeoutError:
+            print("Timeout communication with Danfoss Ally API")
+            raise
+            return False
+        except:
+            print("Unexpected error occured!")
+            raise
+            return False
+
+        return req.json()
+
+    def _call(self, path, headers_data, payload=None):
         """Do the actual API call."""
         import requests
 
-        #try:
-        if payload:
-            req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
-        else:
-            req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+        try:
+            if payload:
+                req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
+            else:
+                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
 
-        if not req.ok:
+            if not req.ok:
+                return False
+        except TimeoutError:
+            print("Timeout communication with Danfoss Ally API")
+            raise
             return False
-        #except TimeoutError:
-        #    print("Timeout communication with Danfoss Ally API")
-        #    raise
-        #    return False
-        #except:
-        #    print("Unexpected error occured!")
-        #    raise
-        #    return False
+        except:
+            print("Unexpected error occured!")
+            raise
+            return False
 
         return req.json()
 
@@ -46,21 +69,21 @@ class DanfossAllyAPI():
 
         post_data = 'grant_type=client_credentials'
 
-        callData = await self._call('/oauth2/token', header_data, post_data)
+        callData = await self._async_call('/oauth2/token', header_data, post_data)
 
         if callData is False:
             return False
 
         return callData['access_token']
 
-    async def get_devices(self, token):
+    def get_devices(self, token):
         """Get list of all devices."""
 
         header_data = {}
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + token
 
-        callData = await self._call('/ally/devices', header_data)
+        callData = self._call('/ally/devices', header_data)
 
         return callData
 
@@ -71,6 +94,6 @@ class DanfossAllyAPI():
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + token
 
-        callData = await self._call('/ally/devices/' + device_id, header_data)
+        callData = await self._async_call('/ally/devices/' + device_id, header_data)
 
         return callData

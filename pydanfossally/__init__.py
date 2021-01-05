@@ -38,11 +38,11 @@ class DanfossAlly:
         self._authorized = True
         return True
 
-    async def getDeviceList(self):
+    def getDeviceList(self):
         """Get device list."""
         #loop = asyncio.get_running_loop()
         #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
-        devices = await self._api.get_devices(self._token)
+        devices = self._api.get_devices(self._token)
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
