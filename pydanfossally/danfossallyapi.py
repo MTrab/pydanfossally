@@ -72,7 +72,19 @@ class DanfossAllyAPI():
 
         post_data = 'grant_type=client_credentials'
 
-        req = requests.post(API_HOST + '/oauth2/token', data=post_data, headers=header_data, timeout=10)
+        try:
+            req = requests.post(API_HOST + '/oauth2/token', data=post_data, headers=header_data, timeout=10)
+
+            if not req.ok:
+                return False
+        except TimeoutError:
+            print("Timeout communication with Danfoss Ally API")
+            raise
+            return False
+        except:
+            print("Unexpected error occured!")
+            raise
+            return False
 
         callData = req.json()
 
