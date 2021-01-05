@@ -41,8 +41,10 @@ class DanfossAllyAPI():
     def _call(self, path, headers_data, payload=None):
         """Redirect sync API call to async."""
 
-        pool = concurrent.futures.ThreadPoolExecutor()
-        result = pool.submit(asyncio.run, self._async_call(path, headers_data, payload)).result()
+        #pool = concurrent.futures.ThreadPoolExecutor()
+        #result = pool.submit(asyncio.run, self._async_call(path, headers_data, payload)).result()
+        loop = asyncio.get_running_loop()
+        result = loop.run_in_executor(None, self._async_call(path, headers_data, payload))
 
         return result
 
