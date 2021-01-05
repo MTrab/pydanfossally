@@ -1,4 +1,5 @@
-import asyncio
+import asyncio, concurrent.futures
+import datetime
 import json
 
 API_HOST = "https://api.danfoss.com"
@@ -7,6 +8,7 @@ API_HOST = "https://api.danfoss.com"
 class DanfossAllyAPI():
     def __init__(self):
         """Init API."""
+        self._test = ''
 
     async def _async_call(self, path, headers_data, payload=None):
         """Do the actual API call async."""
@@ -33,26 +35,11 @@ class DanfossAllyAPI():
 
     def _call(self, path, headers_data, payload=None):
         """Do the actual API call."""
-        import requests
 
-        try:
-            if payload:
-                req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
-            else:
-                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+        pool = concurrent.futures.ThreadPoolExecutor()
+        result = pool.submit(asyncio.run, self._async_call(path, headers_data, payload)).result()
 
-            if not req.ok:
-                return False
-        except TimeoutError:
-            print("Timeout communication with Danfoss Ally API")
-            raise
-            return False
-        except:
-            print("Unexpected error occured!")
-            raise
-            return False
-
-        return req.json()
+        return result
 
     async def async_getToken(self, key, secret):
         """Get token."""

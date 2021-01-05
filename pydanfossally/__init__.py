@@ -13,11 +13,18 @@ class DanfossAlly:
         self._apikey =  ''
         self._apisecret = ''
         self._token = ''
-        self._expire = ''
         self._authorized = False
         self.devices = {}
 
         self._api = DanfossAllyAPI()
+
+    async def _refresh_token(self):
+        if self._refresh_at >= datetime.datetime.now():
+            return False
+
+        expires_in = float(token['expires_in'])
+        self._refresh_at = datetime.datetime.now()
+        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
 
     async def async_initialize(self, key, secret):
         """Authorize and initialize the connection."""
@@ -31,7 +38,6 @@ class DanfossAlly:
             return False
 
         self._token = token['token']
-        self._expire = token['expires_in']
         self._authorized = True
         return self._authorized
 
