@@ -96,14 +96,14 @@ class DanfossAllyAPI():
         self._token = callData['access_token']
         return True
 
-    async def get_devices(self):
+    def get_devices(self):
         """Get list of all devices."""
 
         header_data = {}
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + self._token
 
-        callData = await self._async_call('/ally/devices', header_data)
+        callData = self._call('/ally/devices', header_data)
 
         return callData
 
