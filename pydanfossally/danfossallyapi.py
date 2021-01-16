@@ -88,13 +88,13 @@ class DanfossAllyAPI():
 
         if callData is False:
             return False
-        else:
-            expires_in = float(callData['expires_in'])
-            self._refresh_at = datetime.datetime.now()
-            self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
-            self._refresh_at = self._refresh_at + datetime.timedelta(seconds=-30)
-            self._token = callData['access_token']
-            return True
+
+        expires_in = float(callData['expires_in'])
+        self._refresh_at = datetime.datetime.now()
+        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
+        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=-30)
+        self._token = callData['access_token']
+        return True
 
     async def get_devices(self):
         """Get list of all devices."""
@@ -103,7 +103,7 @@ class DanfossAllyAPI():
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + self._token
 
-        callData = self._async_call('/ally/devices', header_data)
+        callData = await self._async_call('/ally/devices', header_data)
 
         return callData
 
