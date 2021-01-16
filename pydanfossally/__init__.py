@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.13'
+__version__ = '0.0.14'
 
 
 class DanfossAlly:
@@ -31,11 +31,11 @@ class DanfossAlly:
         self._authorized = True
         return self._authorized
 
-    def getDeviceList(self):
+    async def getDeviceList(self):
         """Get device list."""
         #loop = asyncio.get_running_loop()
         #devices = loop.run_in_executor(None, self._api.get_devices, self._token)
-        devices = self._api.get_devices()
+        devices = await self._api.get_devices()
 
         if devices is None:
             raise Exception("No devices loaded, API error?!")
