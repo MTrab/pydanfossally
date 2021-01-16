@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.12'
+__version__ = '0.0.13'
 
 
 class DanfossAlly:
@@ -11,6 +11,7 @@ class DanfossAlly:
     def __init__(self):
         """Init the API connector variables."""
         self._authorized = False
+        self._token = None
         self.devices = {}
 
         self._api = DanfossAllyAPI()
@@ -26,6 +27,7 @@ class DanfossAlly:
             self._authorized = False
             return False
 
+        self._token = self._api._token
         self._authorized = True
         return self._authorized
 
@@ -53,10 +55,30 @@ class DanfossAlly:
                     setpoint = setpoint/10
                     self.devices[device['id']]['setpoint'] = setpoint
                     self.devices[device['id']]['isThermostat'] = True
-                if status['code'] == 'temp_current':
+                elif status['code'] == 'temp_current':
                     temperature = float(status['value'])
                     temperature = temperature/10
                     self.devices[device['id']]['temperature'] = temperature
+                elif status['code'] == 'upper_temp':
+                    temperature = float(status['value'])
+                    temperature = temperature/10
+                    self.devices[device['id']]['upper_temp'] = temperature
+                elif status['code'] == 'lower_temp':
+                    temperature = float(status['value'])
+                    temperature = temperature/10
+                    self.devices[device['id']]['lower_temp'] = temperature
+                elif status['code'] == 'battery_percentage':
+                    battery = status['value']
+                    self.devices[device['id']]['battery'] = battery
+                elif status['code'] == 'window_state':
+                    window = status['value']
+                    if window == "open":
+                        self.devices[device['id']]['window_open'] = True
+                    else:
+                        self.devices[device['id']]['window_open'] = False
+                elif status['code'] == 'child_lock':
+                    childlock = status['value']
+                    self.devices[device['id']]['child_lock'] = childlock
                 elif status['code'] == 'mode':
                     self.devices[device['id']]['mode'] = status['value']
 

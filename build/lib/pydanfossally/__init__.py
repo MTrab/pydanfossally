@@ -2,7 +2,7 @@ import asyncio
 
 from .danfossallyapi import *
 
-__version__ = '0.0.11'
+__version__ = '0.0.12'
 
 
 class DanfossAlly:
@@ -53,6 +53,10 @@ class DanfossAlly:
                     setpoint = setpoint/10
                     self.devices[device['id']]['setpoint'] = setpoint
                     self.devices[device['id']]['isThermostat'] = True
+                if status['code'] == 'temp_current':
+                    temperature = float(status['value'])
+                    temperature = temperature/10
+                    self.devices[device['id']]['temperature'] = temperature
                 elif status['code'] == 'mode':
                     self.devices[device['id']]['mode'] = status['value']
 
