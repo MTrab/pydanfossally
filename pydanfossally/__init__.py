@@ -37,6 +37,11 @@ class DanfossAlly:
             raise Exception("No devices loaded, API error?!")
             return
 
+        if not 'result' in devices:
+            print(devices)
+            raise Exception("Something went wrong loading devices!")
+            return
+
         for device in devices['result']:
             self.devices[device['id']] = {}
             self.devices[device['id']]['isThermostat'] = False
