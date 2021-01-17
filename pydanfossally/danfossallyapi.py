@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import datetime
 import json
@@ -15,10 +14,10 @@ class DanfossAllyAPI():
         self._token = ''
         self._refresh_at = datetime.datetime.now()
 
-    async def _async_call(self, path, headers_data, payload=None):
+    def _call(self, path, headers_data, payload=None):
         """Do the actual API call async."""
 
-        await self._refresh_token()
+        self._refresh_token()
         try:
             if payload:
                 req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
@@ -38,20 +37,13 @@ class DanfossAllyAPI():
 
         return req.json()
 
-    def _call(self, path, headers_data, payload=None):
-        """Redirect sync API call to async."""
-
-        result = asyncio.run(self._async_call(path, headers_data, payload))
-
-        return result
-
-    async def _refresh_token(self):
+    def _refresh_token(self):
         if self._refresh_at > datetime.datetime.now():
             return False
 
-        await self.async_getToken()
+        self.getToken()
 
-    async def async_getToken(self, key=None, secret=None):
+    def getToken(self, key=None, secret=None):
         """Get token."""
 
         if not key is None:
@@ -107,14 +99,14 @@ class DanfossAllyAPI():
 
         return callData
 
-    async def async_get_device(self, device_id):
+    def async_get_device(self, device_id):
         """Get device details."""
 
         header_data = {}
         header_data['Accept'] = 'application/json'
         header_data['Authorization'] = 'Bearer ' + self._token
 
-        callData = await self._async_call(
+        callData = self._call(
             '/ally/devices/' + device_id, header_data
         )
 
