@@ -1,6 +1,6 @@
 from .danfossallyapi import *
 
-__version__ = '0.0.18'
+__version__ = '0.0.19'
 
 
 class DanfossAlly:
@@ -16,8 +16,6 @@ class DanfossAlly:
 
     def initialize(self, key, secret):
         """Authorize and initialize the connection."""
-        #self._apikey = key
-        #self._apisecret = secret
 
         token = self._api.getToken(key, secret)
         
@@ -92,3 +90,11 @@ class DanfossAlly:
     def authorized(self):
         """Return authorized status."""
         return self._authorized
+
+    def setTemperature(self, device_id: str, temp: float) -> bool:
+        """Updates temperature setpoint for given device."""
+        temperature = int(temp*10)
+
+        result = self._api.set_temperature(device_id, temperature)
+
+        return result

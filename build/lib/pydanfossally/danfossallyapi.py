@@ -20,9 +20,18 @@ class DanfossAllyAPI():
         self._refresh_token()
         try:
             if payload:
-                req = requests.post(API_HOST + path, data=payload, headers=headers_data, timeout=10)
+                req = requests.post(
+                    API_HOST + path,
+                    json=payload,
+                    headers=headers_data,
+                    timeout=10
+                )
             else:
-                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+                req = requests.get(
+                    API_HOST + path,
+                    headers=headers_data,
+                    timeout=10
+                )
 
             if not req.ok:
                 return False
@@ -38,12 +47,22 @@ class DanfossAllyAPI():
         return req.json()
 
     def _refresh_token(self):
+        """Refresh OAuth2 token if expired."""
         if self._refresh_at > datetime.datetime.now():
             return False
 
         self.getToken()
 
-    def getToken(self, key=None, secret=None):
+    def _generate_base64_token(self, key: str, secret: str) -> str:
+        """Generates a base64 token"""
+        key_secret = key + ":" + secret
+        key_secret_bytes = key_secret.encode("ascii")
+        base64_bytes = base64.b64encode(key_secret_bytes)
+        base64_token = base64_bytes.decode("ascii")
+
+        return base64_token
+
+    def getToken(self, key=None, secret=None) -> str:
         """Get token."""
 
         if not key is None:
@@ -51,19 +70,21 @@ class DanfossAllyAPI():
         if not secret is None:
             self._secret = secret
 
-        encStr = self._key + ':' + self._secret
-        encBytes = encStr.encode('ascii')
-        encoded = base64.b64encode(encBytes).decode('ascii')
+        base64_token = self._generate_base64_token(self._key, self._secret)
 
         header_data = {}
         header_data['Content-Type'] = 'application/x-www-form-urlencoded'
-        header_data['Authorization'] = 'Basic ' + encoded
+        header_data['Authorization'] = 'Basic ' + base64_token
         header_data['Accept'] = 'application/json'
 
         post_data = 'grant_type=client_credentials'
-
         try:
-            req = requests.post(API_HOST + '/oauth2/token', data=post_data, headers=header_data, timeout=10)
+            req = requests.post(
+                API_HOST + '/oauth2/token',
+                data=post_data,
+                headers=header_data,
+                timeout=10
+            )
 
             if not req.ok:
                 return False
@@ -83,7 +104,9 @@ class DanfossAllyAPI():
 
         expires_in = float(callData['expires_in'])
         self._refresh_at = datetime.datetime.now()
-        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
+        self._refresh_at = self._refresh_at + datetime.timedelta(
+            seconds=expires_in
+        )
         self._refresh_at = self._refresh_at + datetime.timedelta(seconds=-30)
         self._token = callData['access_token']
         return True
@@ -111,3 +134,20 @@ class DanfossAllyAPI():
         )
 
         return callData
+
+    def set_temperature(self, device_id, temp) -> bool:
+        """Set temperature setpoint."""
+
+        header_data = {}
+        header_data['Accept'] = 'application/json'
+        header_data['Authorization'] = 'Bearer ' + self._token
+
+        request_body = {"commands": [{"code": "temp_set", "value": temp}]}
+        
+        callData = self._call(
+            '/ally/devices/' + device_id + "/commands",
+            header_data,
+            request_body
+        )
+
+        return callData['result']
