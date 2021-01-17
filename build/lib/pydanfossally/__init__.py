@@ -1,6 +1,6 @@
 from .danfossallyapi import *
 
-__version__ = '0.0.17'
+__version__ = '0.0.18'
 
 
 class DanfossAlly:
@@ -35,6 +35,11 @@ class DanfossAlly:
 
         if devices is None:
             raise Exception("No devices loaded, API error?!")
+            return
+
+        if not 'result' in devices:
+            print(devices)
+            raise Exception("Something went wrong loading devices!")
             return
 
         for device in devices['result']:

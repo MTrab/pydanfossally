@@ -99,7 +99,7 @@ class DanfossAllyAPI():
 
         return callData
 
-    def async_get_device(self, device_id):
+    def get_device(self, device_id):
         """Get device details."""
 
         header_data = {}
