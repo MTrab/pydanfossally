@@ -1,6 +1,8 @@
+import logging
+
 from .danfossallyapi import *
 
-__version__ = '0.0.19'
+__version__ = '0.0.20'
 
 
 class DanfossAlly:
@@ -21,9 +23,12 @@ class DanfossAlly:
         
         if token is False:
             self._authorized = False
+            _LOGGER.error("Error in authorization")
             return False
 
-        self._token = self._api._token
+        _LOGGER.debug("Token received: %s",
+                      self._api.token)
+        self._token = self._api.token
         self._authorized = True
         return self._authorized
 
@@ -32,12 +37,12 @@ class DanfossAlly:
         devices = self._api.get_devices()
 
         if devices is None:
-            raise Exception("No devices loaded, API error?!")
+            _LOGGER.warning("No devices loaded, API error?!")
             return
 
         if not 'result' in devices:
             print(devices)
-            raise Exception("Something went wrong loading devices!")
+            _LOGGER.error("Something went wrong loading devices!")
             return
 
         for device in devices['result']:

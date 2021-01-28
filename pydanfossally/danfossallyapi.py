@@ -1,10 +1,12 @@
 import base64
 import datetime
 import json
+import logging
 import requests
 
 API_HOST = "https://api.danfoss.com"
 
+_LOGGER = logging.getLogger(__name__)
 
 class DanfossAllyAPI():
     def __init__(self):
@@ -34,14 +36,13 @@ class DanfossAllyAPI():
                 )
 
             if not req.ok:
+                _LOGGER.warning("Invalid API response!")
                 return False
         except TimeoutError:
-            print("Timeout communication with Danfoss Ally API")
-            raise
+            _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
         except:
-            print("Unexpected error occured!")
-            raise
+            _LOGGER.warning("Unexpected error occured in communications with Danfoss Ally API!")
             return False
 
         return req.json()
@@ -87,14 +88,13 @@ class DanfossAllyAPI():
             )
 
             if not req.ok:
+                _LOGGER.warning("Invalid API response!")
                 return False
         except TimeoutError:
-            print("Timeout communication with Danfoss Ally API")
-            raise
+            _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
         except:
-            print("Unexpected error occured!")
-            raise
+            _LOGGER.warning("Unexpected error occured in communications with Danfoss Ally API!")
             return False
 
         callData = req.json()
@@ -151,3 +151,8 @@ class DanfossAllyAPI():
         )
 
         return callData['result']
+
+    @property
+    def token(self) -> str:
+        """Return token."""
+        return self._token
