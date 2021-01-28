@@ -4,7 +4,7 @@ from .danfossallyapi import *
 
 _LOGGER = logging.getLogger(__name__)
 
-__version__ = '0.0.21'
+__version__ = '0.0.22'
 
 
 class DanfossAlly:
@@ -39,7 +39,7 @@ class DanfossAlly:
         devices = self._api.get_devices()
 
         if devices is None:
-            _LOGGER.warning("No devices loaded, API error?!")
+            _LOGGER.error("No devices loaded, API error?!")
             return
 
         if not 'result' in devices:

@@ -36,7 +36,6 @@ class DanfossAllyAPI():
                 )
 
             if not req.ok:
-                _LOGGER.warning("Invalid API response!")
                 return False
         except TimeoutError:
             _LOGGER.warning("Timeout communication with Danfoss Ally API")
@@ -88,7 +87,6 @@ class DanfossAllyAPI():
             )
 
             if not req.ok:
-                _LOGGER.warning("Invalid API response!")
                 return False
         except TimeoutError:
             _LOGGER.warning("Timeout communication with Danfoss Ally API")

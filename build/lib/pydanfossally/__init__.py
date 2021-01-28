@@ -2,7 +2,9 @@ import logging
 
 from .danfossallyapi import *
 
-__version__ = '0.0.20'
+_LOGGER = logging.getLogger(__name__)
+
+__version__ = '0.0.21'
 
 
 class DanfossAlly:
