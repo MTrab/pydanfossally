@@ -1,10 +1,6 @@
 import logging
 
 from .danfossallyapi import *
-from .const import (
-    THERMOSTAT_MODE_HEAT,
-    THERMOSTAT_MODE_PAUSE
-)
 
 _LOGGER = logging.getLogger(__name__)
 
