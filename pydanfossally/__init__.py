@@ -119,7 +119,6 @@ class DanfossAlly:
     
     def setMode(self, device_id: str, mode: str) -> bool:
         """Updates operating mode for given device."""
-
         result = self._api.set_mode(device_id, mode)
 
         return result
