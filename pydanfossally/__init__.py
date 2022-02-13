@@ -4,7 +4,7 @@ from .danfossallyapi import *
 
 _LOGGER = logging.getLogger(__name__)
 
-__version__ = '0.0.23'
+__version__ = '0.0.24'
 
 
 class DanfossAlly:
