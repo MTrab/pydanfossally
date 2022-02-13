@@ -76,6 +76,14 @@ class DanfossAlly:
                     temperature = float(status['value'])
                     temperature = temperature/10
                     self.devices[device['id']]['lower_temp'] = temperature
+                elif status['code'] == 'va_temperature':
+                    temperature = float(status['value'])
+                    temperature = temperature/10
+                    self.devices[device['id']]['temperature'] = temperature
+                elif status['code'] == 'va_humidity':
+                    humidity = float(status['value'])
+                    humidity = humidity/10
+                    self.devices[device['id']]['humidity'] = humidity
                 elif status['code'] == 'battery_percentage':
                     battery = status['value']
                     self.devices[device['id']]['battery'] = battery
