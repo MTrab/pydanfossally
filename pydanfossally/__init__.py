@@ -4,7 +4,7 @@ from .danfossallyapi import *
 
 _LOGGER = logging.getLogger(__name__)
 
-__version__ = "0.0.25"
+__version__ = '0.0.26'
 
 
 class DanfossAlly:
@@ -91,12 +91,15 @@ class DanfossAlly:
                     if window == "open":
                         self.devices[device["id"]]["window_open"] = True
                     else:
-                        self.devices[device["id"]]["window_open"] = False
-                elif status["code"] == "child_lock":
-                    childlock = status["value"]
-                    self.devices[device["id"]]["child_lock"] = childlock
-                elif status["code"] == "mode":
-                    self.devices[device["id"]]["mode"] = status["value"]
+                        self.devices[device['id']]['window_open'] = False
+                elif status['code'] == 'child_lock':
+                    childlock = status['value']
+                    self.devices[device['id']]['child_lock'] = childlock
+                elif status['code'] == 'mode':
+                    self.devices[device['id']]['mode'] = status['value']
+                elif status['code'] == 'work_state':
+                    self.devices[device['id']]['work_state'] = status['value']
+
 
     def getDevice(self, device_id):
         """Get device data."""

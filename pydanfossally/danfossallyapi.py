@@ -158,6 +158,23 @@ class DanfossAllyAPI:
 
         return callData["result"]
 
+    def set_mode(self, device_id, mode) -> bool:
+        """Set mode."""
+
+        header_data = {}
+        header_data['Accept'] = 'application/json'
+        header_data['Authorization'] = 'Bearer ' + self._token
+
+        request_body = {"commands": [{"code": "mode", "value": mode}]}
+        
+        callData = self._call(
+            '/ally/devices/' + device_id + "/commands",
+            header_data,
+            request_body
+        )
+
+        return callData['result']
+
     @property
     def token(self) -> str:
         """Return token."""
