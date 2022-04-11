@@ -4,7 +4,7 @@ from .danfossallyapi import *
 
 _LOGGER = logging.getLogger(__name__)
 
-__version__ = '0.0.24'
+__version__ = '0.0.25'
 
 
 class DanfossAlly:
@@ -114,5 +114,12 @@ class DanfossAlly:
         temperature = int(temp*10)
 
         result = self._api.set_temperature(device_id, temperature)
+
+        return result
+    
+    def setMode(self, device_id: str, mode: str) -> bool:
+        """Updates operating mode for given device."""
+
+        result = self._api.set_mode(device_id, mode)
 
         return result

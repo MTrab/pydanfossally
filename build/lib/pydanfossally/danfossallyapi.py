@@ -120,7 +120,7 @@ class DanfossAllyAPI():
 
         return callData
 
-    def get_device(self, device_id):
+    def get_device(self, device_id: str):
         """Get device details."""
 
         header_data = {}
@@ -133,7 +133,7 @@ class DanfossAllyAPI():
 
         return callData
 
-    def set_temperature(self, device_id, temp) -> bool:
+    def set_temperature(self, device_id: str, temp: int) -> bool:
         """Set temperature setpoint."""
 
         header_data = {}
@@ -141,6 +141,23 @@ class DanfossAllyAPI():
         header_data['Authorization'] = 'Bearer ' + self._token
 
         request_body = {"commands": [{"code": "temp_set", "value": temp}]}
+        
+        callData = self._call(
+            '/ally/devices/' + device_id + "/commands",
+            header_data,
+            request_body
+        )
+
+        return callData['result']
+
+    def set_mode(self, device_id: str, mode: str) -> bool:
+        """Set device operating mode."""
+
+        header_data = {}
+        header_data['Accept'] = 'application/json'
+        header_data['Authorization'] = 'Bearer ' + self._token
+
+        request_body = {"commands": [{"code": "mode", "value": mode}]}
         
         callData = self._call(
             '/ally/devices/' + device_id + "/commands",
