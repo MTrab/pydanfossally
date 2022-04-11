@@ -2,18 +2,20 @@ import base64
 import datetime
 import json
 import logging
+
 import requests
 
 API_HOST = "https://api.danfoss.com"
 
 _LOGGER = logging.getLogger(__name__)
 
-class DanfossAllyAPI():
+
+class DanfossAllyAPI:
     def __init__(self):
         """Init API."""
-        self._key = ''
-        self._secret = ''
-        self._token = ''
+        self._key = ""
+        self._secret = ""
+        self._token = ""
         self._refresh_at = datetime.datetime.now()
 
     def _call(self, path, headers_data, payload=None):
@@ -23,17 +25,10 @@ class DanfossAllyAPI():
         try:
             if payload:
                 req = requests.post(
-                    API_HOST + path,
-                    json=payload,
-                    headers=headers_data,
-                    timeout=10
+                    API_HOST + path, json=payload, headers=headers_data, timeout=10
                 )
             else:
-                req = requests.get(
-                    API_HOST + path,
-                    headers=headers_data,
-                    timeout=10
-                )
+                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
 
             if not req.ok:
                 return False
@@ -41,7 +36,9 @@ class DanfossAllyAPI():
             _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
         except:
-            _LOGGER.warning("Unexpected error occured in communications with Danfoss Ally API!")
+            _LOGGER.warning(
+                "Unexpected error occured in communications with Danfoss Ally API!"
+            )
             return False
 
         return req.json()
@@ -73,17 +70,17 @@ class DanfossAllyAPI():
         base64_token = self._generate_base64_token(self._key, self._secret)
 
         header_data = {}
-        header_data['Content-Type'] = 'application/x-www-form-urlencoded'
-        header_data['Authorization'] = 'Basic ' + base64_token
-        header_data['Accept'] = 'application/json'
+        header_data["Content-Type"] = "application/x-www-form-urlencoded"
+        header_data["Authorization"] = "Basic " + base64_token
+        header_data["Accept"] = "application/json"
 
-        post_data = 'grant_type=client_credentials'
+        post_data = "grant_type=client_credentials"
         try:
             req = requests.post(
-                API_HOST + '/oauth2/token',
+                API_HOST + "/oauth2/token",
                 data=post_data,
                 headers=header_data,
-                timeout=10
+                timeout=10,
             )
 
             if not req.ok:
@@ -92,7 +89,9 @@ class DanfossAllyAPI():
             _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
         except:
-            _LOGGER.warning("Unexpected error occured in communications with Danfoss Ally API!")
+            _LOGGER.warning(
+                "Unexpected error occured in communications with Danfoss Ally API!"
+            )
             return False
 
         callData = req.json()
@@ -100,23 +99,21 @@ class DanfossAllyAPI():
         if callData is False:
             return False
 
-        expires_in = float(callData['expires_in'])
+        expires_in = float(callData["expires_in"])
         self._refresh_at = datetime.datetime.now()
-        self._refresh_at = self._refresh_at + datetime.timedelta(
-            seconds=expires_in
-        )
+        self._refresh_at = self._refresh_at + datetime.timedelta(seconds=expires_in)
         self._refresh_at = self._refresh_at + datetime.timedelta(seconds=-30)
-        self._token = callData['access_token']
+        self._token = callData["access_token"]
         return True
 
     def get_devices(self):
         """Get list of all devices."""
 
         header_data = {}
-        header_data['Accept'] = 'application/json'
-        header_data['Authorization'] = 'Bearer ' + self._token
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
 
-        callData = self._call('/ally/devices', header_data)
+        callData = self._call("/ally/devices", header_data)
 
         return callData
 
@@ -124,12 +121,10 @@ class DanfossAllyAPI():
         """Get device details."""
 
         header_data = {}
-        header_data['Accept'] = 'application/json'
-        header_data['Authorization'] = 'Bearer ' + self._token
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
 
-        callData = self._call(
-            '/ally/devices/' + device_id, header_data
-        )
+        callData = self._call("/ally/devices/" + device_id, header_data)
 
         return callData
 
@@ -137,35 +132,46 @@ class DanfossAllyAPI():
         """Set temperature setpoint."""
 
         header_data = {}
-        header_data['Accept'] = 'application/json'
-        header_data['Authorization'] = 'Bearer ' + self._token
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
 
         request_body = {"commands": [{"code": "temp_set", "value": temp}]}
-        
+
         callData = self._call(
-            '/ally/devices/' + device_id + "/commands",
-            header_data,
-            request_body
+            "/ally/devices/" + device_id + "/commands", header_data, request_body
         )
 
-        return callData['result']
+        return callData["result"]
 
     def set_mode(self, device_id: str, mode: str) -> bool:
         """Set device operating mode."""
 
         header_data = {}
-        header_data['Accept'] = 'application/json'
-        header_data['Authorization'] = 'Bearer ' + self._token
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
 
         request_body = {"commands": [{"code": "mode", "value": mode}]}
-        
+
         callData = self._call(
-            '/ally/devices/' + device_id + "/commands",
-            header_data,
-            request_body
+            "/ally/devices/" + device_id + "/commands", header_data, request_body
         )
 
-        return callData['result']
+        return callData["result"]
+
+    def set_mode(self, device_id, mode) -> bool:
+        """Set mode."""
+
+        header_data = {}
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
+
+        request_body = {"commands": [{"code": "mode", "value": mode}]}
+
+        callData = self._call(
+            "/ally/devices/" + device_id + "/commands", header_data, request_body
+        )
+
+        return callData["result"]
 
     @property
     def token(self) -> str:
