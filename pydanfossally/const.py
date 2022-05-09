@@ -1,3 +1,4 @@
 THERMOSTAT_MODE_AUTO = "hot"
 THERMOSTAT_MODE_MANUAL = "manual"
 THERMOSTAT_MODE_OFF = "pause"
+THERMOSTAT_DEVICE_TYPE = "Danfoss Ally™ Radiator Thermostat"

@@ -2,6 +2,7 @@ import base64
 import datetime
 import json
 import logging
+from nis import match
 
 import requests
 
@@ -128,38 +129,39 @@ class DanfossAllyAPI:
 
         return callData
 
-    def set_temperature(self, device_id: str, temp: int) -> bool:
+    def get_device_status(self, device_id: str):
+        """Get device status."""
+
+        header_data = {}
+        header_data["Accept"] = "application/json"
+        header_data["Authorization"] = "Bearer " + self._token
+
+        callData = self._call("/ally/devices/" + device_id + "/status", header_data)
+
+        return callData
+
+    def set_temperature(self, device_id: str, mode: str, temp: int) -> bool:
         """Set temperature setpoint."""
 
         header_data = {}
         header_data["Accept"] = "application/json"
         header_data["Authorization"] = "Bearer " + self._token
 
-        request_body = {"commands": [{"code": "temp_set", "value": temp}]}
+        result = False
+        if mode in ["at_home", "manual"]:
+            code = 'manual_mode_fast' if mode == 'manual' else 'temp_set'
+            request_body = {"commands": [{"code": code, "value": temp}]}
 
-        callData = self._call(
-            "/ally/devices/" + device_id + "/commands", header_data, request_body
-        )
+            callData = self._call(
+                "/ally/devices/" + device_id + "/commands", header_data, request_body
+            )
 
-        return callData["result"]
+            result = callData["result"]
+
+        return result
 
     def set_mode(self, device_id: str, mode: str) -> bool:
         """Set device operating mode."""
-
-        header_data = {}
-        header_data["Accept"] = "application/json"
-        header_data["Authorization"] = "Bearer " + self._token
-
-        request_body = {"commands": [{"code": "mode", "value": mode}]}
-
-        callData = self._call(
-            "/ally/devices/" + device_id + "/commands", header_data, request_body
-        )
-
-        return callData["result"]
-
-    def set_mode(self, device_id, mode) -> bool:
-        """Set mode."""
 
         header_data = {}
         header_data["Accept"] = "application/json"

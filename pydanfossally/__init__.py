@@ -1,5 +1,7 @@
 import logging
 
+from pydanfossally.const import THERMOSTAT_DEVICE_TYPE, THERMOSTAT_MODE_AUTO
+
 from .danfossallyapi import *
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,18 +53,23 @@ class DanfossAlly:
 
         for device in devices["result"]:
             self.devices[device["id"]] = {}
-            self.devices[device["id"]]["isThermostat"] = False
+            self.devices[device["id"]]["isThermostat"] = device["device_type"] == THERMOSTAT_DEVICE_TYPE
             self.devices[device["id"]]["name"] = device["name"].strip()
             self.devices[device["id"]]["online"] = device["online"]
             self.devices[device["id"]]["update"] = device["update_time"]
             if "model" in device:
                 self.devices[device["id"]]["model"] = device["model"]
+
+            temperatures = {}
             for status in device["status"]:
-                if status["code"] == "temp_set":
-                    setpoint = float(status["value"])
-                    setpoint = setpoint / 10
-                    self.devices[device["id"]]["setpoint"] = setpoint
-                    self.devices[device["id"]]["isThermostat"] = True
+                if status["code"] == "mode":
+                    self.devices[device["id"]]["mode"] = status["value"]
+                elif status["code"] == "temp_set":
+                    temperatures["at_home"] = float(status["value"]) / 10
+                elif status["code"] == "leave_home_fast_heat":
+                    temperatures["leaving_home"] = float(status["value"]) / 10
+                elif status["code"] == "manual_mode_fast":
+                    temperatures["manual"] = float(status["value"]) / 10
                 elif status["code"] == "temp_current":
                     temperature = float(status["value"])
                     temperature = temperature / 10
@@ -95,14 +102,12 @@ class DanfossAlly:
                 elif status["code"] == "child_lock":
                     childlock = status["value"]
                     self.devices[device["id"]]["child_lock"] = childlock
-                elif status["code"] == "mode":
-                    self.devices[device["id"]]["mode"] = status["value"]
                 elif status["code"] == "work_state":
                     self.devices[device["id"]]["work_state"] = status["value"]
 
-    def getDevice(self, device_id):
-        """Get device data."""
-        device = self._api.get_device(device_id)
+            if self.devices[device["id"]]["isThermostat"]:
+                setpoint = temperatures[self.devices[device["id"]]["mode"]]
+                self.devices[device["id"]]["setpoint"] = setpoint
 
     @property
     def authorized(self):
@@ -111,9 +116,10 @@ class DanfossAlly:
 
     def setTemperature(self, device_id: str, temp: float) -> bool:
         """Updates temperature setpoint for given device."""
+        mode = self.devices[device_id]["mode"];
         temperature = int(temp * 10)
 
-        result = self._api.set_temperature(device_id, temperature)
+        result = self._api.set_temperature(device_id, mode, temperature)
 
         return result
 
