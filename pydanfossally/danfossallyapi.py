@@ -2,8 +2,6 @@ import base64
 import datetime
 import json
 import logging
-from nis import match
-
 import requests
 
 API_HOST = "https://api.danfoss.com"
