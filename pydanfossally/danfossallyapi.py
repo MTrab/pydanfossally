@@ -1,3 +1,6 @@
+"""Doing the communications in this file."""
+from __future__ import annotations
+
 import base64
 import datetime
 import json
@@ -18,7 +21,7 @@ class DanfossAllyAPI:
         self._token = ""
         self._refresh_at = datetime.datetime.now()
 
-    def _call(self, path, headers_data, payload=None):
+    def _call(self, path, headers_data, payload=None)->dict:
         """Do the actual API call async."""
 
         self._refresh_token()
@@ -128,20 +131,25 @@ class DanfossAllyAPI:
 
         return callData
 
-    def set_temperature(self, device_id: str, temp: int) -> bool:
+    def set_temperature(self, device_id: str, temp: int, code = "manual_mode_fast") -> bool:
         """Set temperature setpoint."""
 
         header_data = {}
         header_data["Accept"] = "application/json"
         header_data["Authorization"] = "Bearer " + self._token
 
-        request_body = {"commands": [{"code": "temp_set", "value": temp}]}
+        #request_body = {"commands": [{"code": "temp_set", "value": temp}]}
+        request_body = {"commands": [{"code": code, "value": temp}]}
 
         callData = self._call(
             "/ally/devices/" + device_id + "/commands", header_data, request_body
         )
 
+        _LOGGER.debug("Set temperature for device %s: %s", device_id, json.dumps(request_body))
+
         return callData["result"]
+
+
 
     def set_mode(self, device_id: str, mode: str) -> bool:
         """Set device operating mode."""
