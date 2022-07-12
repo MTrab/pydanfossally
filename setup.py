@@ -5,7 +5,7 @@ import sys
 import setuptools
 
 if sys.version_info < (3, 9, 0):
-    sys.exit("The ha_vector module requires Python 3.10.0 or later")
+    sys.exit("The pydanfossally module requires Python 3.9.0 or later")
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
