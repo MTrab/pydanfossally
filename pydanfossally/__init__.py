@@ -7,13 +7,11 @@ from .danfossallyapi import DanfossAllyAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-__version__ = "0.0.27"
-
 
 class DanfossAlly:
     """Danfoss Ally API connector."""
 
-    def __init__(self)->None:
+    def __init__(self) -> None:
         """Init the API connector variables."""
         self._authorized = False
         self._token = None
@@ -21,7 +19,7 @@ class DanfossAlly:
 
         self._api = DanfossAllyAPI()
 
-    def initialize(self, key:str, secret:str)->bool:
+    def initialize(self, key: str, secret: str) -> bool:
         """Authorize and initialize the connection."""
 
         token = self._api.getToken(key, secret)
@@ -36,7 +34,7 @@ class DanfossAlly:
         self._authorized = True
         return self._authorized
 
-    def getDeviceList(self)->None:
+    def getDeviceList(self) -> None:
         """Get device list."""
         devices = self._api.get_devices()
 
@@ -55,7 +53,7 @@ class DanfossAlly:
         for device in devices["result"]:
             self.handleDeviceData(device)
 
-    def handleDeviceData(self, device:dict):
+    def handleDeviceData(self, device: dict):
         self.devices[device["id"]] = {}
         self.devices[device["id"]]["isThermostat"] = False
         self.devices[device["id"]]["name"] = device["name"].strip()
@@ -73,7 +71,13 @@ class DanfossAlly:
         self.devices[device["id"]]["floor_sensor"] = bHasFloorSensor
 
         for status in device["status"]:
-            if status["code"] in ["manual_mode_fast", "at_home_setting", "leaving_home_setting", "pause_setting", "holiday_setting"]:
+            if status["code"] in [
+                "manual_mode_fast",
+                "at_home_setting",
+                "leaving_home_setting",
+                "pause_setting",
+                "holiday_setting",
+            ]:
                 setpoint = float(status["value"])
                 setpoint = setpoint / 10
                 self.devices[device["id"]][status["code"]] = setpoint
@@ -82,7 +86,7 @@ class DanfossAlly:
                 temperature = float(status["value"])
                 temperature = temperature / 10
                 self.devices[device["id"]]["temperature"] = temperature
-            elif status["code"] == "MeasuredValue" and bHasFloorSensor:       # Floor sensor
+            elif status["code"] == "MeasuredValue" and bHasFloorSensor:  # Floor sensor
                 temperature = float(status["value"])
                 temperature = temperature / 10
                 self.devices[device["id"]]["floor temperature"] = temperature
@@ -111,17 +115,11 @@ class DanfossAlly:
                     self.devices[device["id"]]["window_open"] = True
                 else:
                     self.devices[device["id"]]["window_open"] = False
-            # elif status["code"] == "child_lock":
-            #     childlock = status["value"]
-            #     self.devices[device["id"]]["child_lock"] = childlock
-            # elif status["code"] == "mode":
-            #     self.devices[device["id"]]["mode"] = status["value"]
-            # elif status["code"] == "work_state":
-            #     self.devices[device["id"]]["work_state"] = status["value"]
+
             if status["code"] in ["child_lock", "mode", "work_state", "banner_ctrl"]:
                 self.devices[device["id"]][status["code"]] = status["value"]
 
-    def getDevice(self, device_id):
+    def getDevice(self, device_id: str) -> None:
         """Get device data."""
         device = self._api.get_device(device_id)
 
@@ -132,21 +130,22 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading devices!")
             return
 
-        self.handleDeviceDate(device["result"])
+        self.handleDeviceData(device["result"])
 
     @property
-    def authorized(self):
+    def authorized(self) -> bool:
         """Return authorized status."""
         return self._authorized
 
-    def setTemperature(self, device_id: str, temp: float, code = "manual_mode_fast") -> bool:
+    def setTemperature(
+        self, device_id: str, temp: float, code="manual_mode_fast"
+    ) -> bool:
         """Updates temperature setpoint for given device."""
         temperature = int(temp * 10)
 
         result = self._api.set_temperature(device_id, temperature, code)
 
         return result
-
 
     def setMode(self, device_id: str, mode: str) -> bool:
         """Updates operating mode for given device."""
