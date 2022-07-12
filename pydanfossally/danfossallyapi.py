@@ -50,7 +50,6 @@ class DanfossAllyAPI:
             return False
 
         json = req.json()
-        print("JSON: ", json)
         return json
 
     def _refresh_token(self) -> bool:
