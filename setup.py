@@ -1,19 +1,27 @@
 # -*- coding: utf-8 -*-
 
+import sys
+
 import setuptools
 
-from pydanfossally import __version__
+if sys.version_info < (3, 9, 0):
+    sys.exit("The ha_vector module requires Python 3.10.0 or later")
 
-requirements = []
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
 
 setuptools.setup(
     name="pydanfossally",
-    version=__version__,
     description="Danfoss Ally API library",
-    author="Morten Trab",
-    author_email="morten@trab.dk",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    author="Malene Trab",
+    author_email="malene@trab.dk",
     license="MIT",
     url="https://github.com/mtrab/pydanfossally",
     packages=setuptools.find_packages(),
-    install_requires=requirements,
+    project_urls={
+        "Bug Tracker": "https://github.com/mtrab/pydanfossally/issues",
+    },
+    install_requires=["requests>=2.28.0"],
 )
