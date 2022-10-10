@@ -8,6 +8,13 @@ import logging
 
 import requests
 
+from .exceptions import (
+    InternalServerError,
+    NotFoundError,
+    UnauthorizedError,
+    UnexpectedError,
+)
+
 API_HOST = "https://api.danfoss.com"
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,16 +45,20 @@ class DanfossAllyAPI:
             else:
                 req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
 
-            if not req.ok:
-                return False
+            req.raise_for_status()
+        except requests.exceptions.HTTPError as err:
+            code = err.response.status_code
+            if code == 401:
+                raise UnauthorizedError
+            if code == 404:
+                raise NotFoundError
+            if code == 500:
+                raise InternalServerError
+            return False
         except TimeoutError:
-            _LOGGER.warning("Timeout communication with Danfoss Ally API")
-            return False
+            raise TimeoutError
         except:
-            _LOGGER.warning(
-                "Unexpected error occured in communications with Danfoss Ally API!"
-            )
-            return False
+            raise UnexpectedError
 
         json = req.json()
         print("JSON: ", json)
