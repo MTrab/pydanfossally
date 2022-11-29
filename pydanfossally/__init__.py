@@ -77,6 +77,7 @@ class DanfossAlly:
                 "leaving_home_setting",
                 "pause_setting",
                 "holiday_setting",
+                "temp_set"
             ]:
                 setpoint = float(status["value"])
                 setpoint = setpoint / 10
@@ -89,15 +90,16 @@ class DanfossAlly:
             elif status["code"] == "MeasuredValue" and bHasFloorSensor:  # Floor sensor
                 temperature = float(status["value"])
                 temperature = temperature / 10
-                self.devices[device["id"]]["floor temperature"] = temperature
-            elif status["code"] == "upper_temp":
+                self.devices[device["id"]]["floor_temperature"] = temperature
+            elif status["code"] in [
+                "upper_temp",
+                "lower_temp",
+                "floor_temp_min",
+                "floor_temp_max"
+            ]:
                 temperature = float(status["value"])
                 temperature = temperature / 10
-                self.devices[device["id"]]["upper_temp"] = temperature
-            elif status["code"] == "lower_temp":
-                temperature = float(status["value"])
-                temperature = temperature / 10
-                self.devices[device["id"]]["lower_temp"] = temperature
+                self.devices[device["id"]][status["code"]] = temperature
             elif status["code"] == "va_temperature":
                 temperature = float(status["value"])
                 temperature = temperature / 10
@@ -116,7 +118,7 @@ class DanfossAlly:
                 else:
                     self.devices[device["id"]]["window_open"] = False
 
-            if status["code"] in ["child_lock", "mode", "work_state", "banner_ctrl"]:
+            if status["code"] in ["child_lock", "mode", "work_state", "banner_ctrl", "window_toggle", "switch", "switch_state"]:
                 self.devices[device["id"]][status["code"]] = status["value"]
 
     def getDevice(self, device_id: str) -> None:
@@ -150,5 +152,11 @@ class DanfossAlly:
     def setMode(self, device_id: str, mode: str) -> bool:
         """Updates operating mode for given device."""
         result = self._api.set_mode(device_id, mode)
+
+        return result
+
+    def sendCommand(self, device_id: str, listofcommands: list[Tuple[str, str]]) -> bool:
+        """Send list of commands for given device."""
+        result = self._api.send_command(device_id, listofcommands)
 
         return result

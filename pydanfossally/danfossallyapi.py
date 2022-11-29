@@ -39,6 +39,7 @@ class DanfossAllyAPI:
 
         try:
             if payload:
+                _LOGGER.debug("Send command: %s: %s", path, json.dumps(payload))
                 req = requests.post(
                     API_HOST + path, json=payload, headers=headers_data, timeout=10
                 )
@@ -48,6 +49,8 @@ class DanfossAllyAPI:
             req.raise_for_status()
         except requests.exceptions.HTTPError as err:
             code = err.response.status_code
+            if payload:
+                _LOGGER.debug("Http status code: %s", code)
             if code == 401:
                 raise UnauthorizedError
             if code == 404:
@@ -60,9 +63,11 @@ class DanfossAllyAPI:
         except:
             raise UnexpectedError
 
-        json = req.json()
-        print("JSON: ", json)
-        return json
+        response = req.json()
+        if payload:
+            _LOGGER.debug("Command response: %s", response)
+        print("JSON: ", response)
+        return response
 
     def _refresh_token(self) -> bool:
         """Refresh OAuth2 token if expired."""
@@ -175,6 +180,22 @@ class DanfossAllyAPI:
         )
 
         return callData["result"]
+
+
+    def send_command(self, device_id: str, listofcommands: list[Tuple[str, str]]) -> bool:
+        """Send commands."""
+
+        commands = []
+        for code,value in listofcommands:
+            commands += [{"code": code, "value": value}]
+        request_body = {"commands": commands}
+
+        callData = self._call(
+            "/ally/devices/" + device_id + "/commands", payload=request_body
+        )
+
+        return callData["result"]
+
 
     @property
     def token(self) -> str:
