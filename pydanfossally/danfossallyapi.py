@@ -52,14 +52,16 @@ class DanfossAllyAPI:
             if payload:
                 _LOGGER.debug("Http status code: %s", code)
             if code == 401:
-                raise UnauthorizedError
+                raise UnauthorizedError from err
             if code == 404:
-                raise NotFoundError
+                raise NotFoundError from err
             if code == 500:
-                raise InternalServerError
+                raise InternalServerError from err
             return False
-        except TimeoutError:
-            raise TimeoutError
+        except TimeoutError as err:
+            raise TimeoutError from err
+        except requests.exceptions.ConnectionError as err:
+            raise ConnectionError from err
         except:
             raise UnexpectedError
 
@@ -181,21 +183,23 @@ class DanfossAllyAPI:
 
         return callData["result"]
 
-
-    def send_command(self, device_id: str, listofcommands: list[Tuple[str, str]]) -> bool:
+    def send_command(
+        self, device_id: str, listofcommands: list[tuple[str, str]]
+    ) -> bool:
         """Send commands."""
 
         commands = []
-        for code,value in listofcommands:
+        for code, value in listofcommands:
             commands += [{"code": code, "value": value}]
         request_body = {"commands": commands}
+
+        _LOGGER.debug("Sending command: %s", request_body)
 
         callData = self._call(
             "/ally/devices/" + device_id + "/commands", payload=request_body
         )
 
         return callData["result"]
-
 
     @property
     def token(self) -> str:

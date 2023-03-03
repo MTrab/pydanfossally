@@ -71,55 +71,108 @@ class DanfossAlly:
         self.devices[device["id"]]["floor_sensor"] = bHasFloorSensor
 
         for status in device["status"]:
-            if status["code"] in [
-                "manual_mode_fast",
-                "at_home_setting",
-                "leaving_home_setting",
-                "pause_setting",
-                "holiday_setting",
-                "temp_set"
-            ]:
-                setpoint = float(status["value"])
-                setpoint = setpoint / 10
-                self.devices[device["id"]][status["code"]] = setpoint
-                self.devices[device["id"]]["isThermostat"] = True
-            elif status["code"] == "temp_current":
-                temperature = float(status["value"])
-                temperature = temperature / 10
-                self.devices[device["id"]]["temperature"] = temperature
-            elif status["code"] == "MeasuredValue" and bHasFloorSensor:  # Floor sensor
-                temperature = float(status["value"])
-                temperature = temperature / 10
-                self.devices[device["id"]]["floor_temperature"] = temperature
-            elif status["code"] in [
-                "upper_temp",
-                "lower_temp",
-                "floor_temp_min",
-                "floor_temp_max"
-            ]:
-                temperature = float(status["value"])
-                temperature = temperature / 10
-                self.devices[device["id"]][status["code"]] = temperature
-            elif status["code"] == "va_temperature":
-                temperature = float(status["value"])
-                temperature = temperature / 10
-                self.devices[device["id"]]["temperature"] = temperature
-            elif status["code"] == "va_humidity":
-                humidity = float(status["value"])
-                humidity = humidity / 10
-                self.devices[device["id"]]["humidity"] = humidity
-            elif status["code"] == "battery_percentage":
-                battery = status["value"]
-                self.devices[device["id"]]["battery"] = battery
-            elif status["code"] == "window_state":
-                window = status["value"]
-                if window == "open":
-                    self.devices[device["id"]]["window_open"] = True
-                else:
-                    self.devices[device["id"]]["window_open"] = False
+            try:
+                if status["code"] in [
+                    "manual_mode_fast",
+                    "at_home_setting",
+                    "leaving_home_setting",
+                    "pause_setting",
+                    "holiday_setting",
+                    "temp_set",
+                ]:
+                    setpoint = float(status["value"])
+                    setpoint = setpoint / 10
+                    self.devices[device["id"]][status["code"]] = setpoint
+                    self.devices[device["id"]]["isThermostat"] = True
+                elif status["code"] == "temp_current":
+                    temperature = float(status["value"])
+                    temperature = temperature / 10
+                    self.devices[device["id"]]["temperature"] = temperature
+                elif (
+                    status["code"] == "MeasuredValue" and bHasFloorSensor
+                ):  # Floor sensor
+                    temperature = float(status["value"])
+                    temperature = temperature / 10
+                    self.devices[device["id"]]["floor_temperature"] = temperature
+                elif status["code"] in [
+                    "upper_temp",
+                    "lower_temp",
+                    "floor_temp_min",
+                    "floor_temp_max",
+                ]:
+                    temperature = float(status["value"]) / 10
+                    self.devices[device["id"]][status["code"]] = temperature
+                elif status["code"] in ["local_temperature", "ext_measured_rs"]:
+                    temperature = float(status["value"]) / 100
+                    self.devices[device["id"]][status["code"]] = temperature
+                elif status["code"] == "va_temperature":
+                    temperature = float(status["value"])
+                    temperature = temperature / 10
+                    self.devices[device["id"]]["temperature"] = temperature
+                elif status["code"] == "va_humidity":
+                    humidity = float(status["value"])
+                    humidity = humidity / 10
+                    self.devices[device["id"]]["humidity"] = humidity
+                elif status["code"] == "battery_percentage":
+                    battery = status["value"]
+                    self.devices[device["id"]]["battery"] = battery
+                elif status["code"] == "window_state":
+                    window = status["value"]
+                    if window == "open":
+                        self.devices[device["id"]]["window_open"] = True
+                    else:
+                        self.devices[device["id"]]["window_open"] = False
+                elif status["code"] == "pi_heating_demand":
+                    self.devices[device["id"]]["valve_opening"] = status["value"]
+                elif status["code"] == "LoadRadiatorRoomMean":
+                    self.devices[device["id"]]["load_room_mean"] = status["value"]
+                elif status["code"] == "sensor_avg_temp":
+                    self.devices[device["id"]]["external_sensor_temperature"] = (
+                        float(status["value"]) / 10
+                    )
+                elif status["code"] in [
+                    "window_toggle",
+                    "switch",
+                    "switch_state",
+                    "room_sensor",
+                    "heat_supply_request",
+                    "boiler_relay",
+                    "factory_reset",
+                    "mounting_mode_active",
+                    "heat_available",
+                    "load_balance_enable",
+                    "radiator_covered",
+                ]:
+                    if isinstance(status["value"], bool):
+                        self.devices[device["id"]][status["code"].lower()] = status[
+                            "value"
+                        ]
 
-            if status["code"] in ["child_lock", "mode", "work_state", "banner_ctrl", "window_toggle", "switch", "switch_state"]:
-                self.devices[device["id"]][status["code"]] = status["value"]
+                    elif isinstance(status["value"], str):
+                        self.devices[device["id"]][status["code"].lower()] = (
+                            status["value"].lower() == "true"
+                        )
+
+                if status["code"] in [
+                    "child_lock",
+                    "mode",
+                    "work_state",
+                    "banner_ctrl",
+                    "Load_estimate",
+                    "fault",
+                    "sw_error_code",
+                    "ctrl_alg",
+                    "adaptation_runstatus",
+                ]:
+                    self.devices[device["id"]][status["code"].lower()] = status["value"]
+
+            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
+                _LOGGER.debug(
+                    "Failed to handle data for device %s, Status code: %s, Error: %s",
+                    device["id"],
+                    status["code"],
+                    err,
+                )
 
     def getDevice(self, device_id: str) -> None:
         """Get device data."""
@@ -155,7 +208,9 @@ class DanfossAlly:
 
         return result
 
-    def sendCommand(self, device_id: str, listofcommands: list[Tuple[str, str]]) -> bool:
+    def sendCommand(
+        self, device_id: str, listofcommands: list[tuple[str, str]]
+    ) -> bool:
         """Send list of commands for given device."""
         result = self._api.send_command(device_id, listofcommands)
 
