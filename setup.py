@@ -24,4 +24,5 @@ setuptools.setup(
         "Bug Tracker": "https://github.com/mtrab/pydanfossally/issues",
     },
     install_requires=["requests>=2.28.0"],
+    version="0.0.28",
 )
