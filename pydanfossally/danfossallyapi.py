@@ -19,6 +19,13 @@ API_HOST = "https://api.danfoss.com"
 
 _LOGGER = logging.getLogger(__name__)
 
+_MODE_TO_LAST_CLICK_TIME_FORMAT_MAP = {
+    # The format was reverse engineered from experimentation with the API and the Danfoss Ally app
+    "at_home": "010000",
+    "leaving_home": "000101",
+}
+"""Map mode to obscure format required by `last_click_time`"""
+
 
 class DanfossAllyAPI:
     def __init__(self) -> None:
@@ -175,10 +182,25 @@ class DanfossAllyAPI:
 
     def set_mode(self, device_id: str, mode: str) -> bool:
         """Set device operating mode."""
-        request_body = {"commands": [{"code": "mode", "value": mode}]}
+        commands = [{"code": "mode", "value": mode}]
+
+        # Strangely, some modes require `last_click_time` to also be set to "YYYYmmddHHMM{{mode_in_last_click_time_format}}"
+        if mode in _MODE_TO_LAST_CLICK_TIME_FORMAT_MAP:
+            commands.append(
+                {
+                    "code": "last_click_time",
+                    "value": f"{datetime.datetime.now():%Y%m%d%H%M}{_MODE_TO_LAST_CLICK_TIME_FORMAT_MAP[mode]}",
+                }
+            )
+
+        request_body = {"commands": commands}
 
         callData = self._call(
             "/ally/devices/" + device_id + "/commands", payload=request_body
+        )
+
+        _LOGGER.debug(
+            "Set mode for device %s: %s", device_id, json.dumps(request_body)
         )
 
         return callData["result"]
