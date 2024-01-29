@@ -122,6 +122,12 @@ class DanfossAlly:
                         self.devices[device["id"]]["window_open"] = True
                     else:
                         self.devices[device["id"]]["window_open"] = False
+                elif status["code"] == "output_status":
+                    valve = status["value"]
+                    if valve == "active":
+                        self.devices[device["id"]]["output_status"] = True
+                    else:
+                        self.devices[device["id"]]["output_status"] = False
                 elif status["code"] == "pi_heating_demand":
                     self.devices[device["id"]]["valve_opening"] = status["value"]
                 elif status["code"] == "LoadRadiatorRoomMean":
