@@ -132,7 +132,7 @@ class DanfossAlly:
                     self.devices[device["id"]]["valve_opening"] = status["value"]
                 elif status["code"] == "LoadRadiatorRoomMean":
                     self.devices[device["id"]]["load_room_mean"] = status["value"]
-                elif status["code"] == "sensor_avg_temp":
+                elif status["code"] == "ext_measured_rs":
                     self.devices[device["id"]]["external_sensor_temperature"] = (
                         float(status["value"]) / 10
                     )
@@ -140,10 +140,8 @@ class DanfossAlly:
                     "window_toggle",
                     "switch",
                     "switch_state",
-                    "room_sensor",
                     "heat_supply_request",
                     "boiler_relay",
-                    "factory_reset",
                     "mounting_mode_active",
                     "heat_available",
                     "load_balance_enable",
@@ -163,12 +161,12 @@ class DanfossAlly:
                     "child_lock",
                     "mode",
                     "work_state",
-                    "banner_ctrl",
-                    "Load_estimate",
+                    "load_balance_enable",
                     "fault",
                     "sw_error_code",
                     "ctrl_alg",
                     "adaptation_runstatus",
+                    "SetpointChangeSource",
                 ]:
                     self.devices[device["id"]][status["code"].lower()] = status["value"]
 
