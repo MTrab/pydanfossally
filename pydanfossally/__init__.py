@@ -1,4 +1,5 @@
 """Module for handling Danfoss Ally API communication"""
+
 from __future__ import annotations
 
 import logging
@@ -105,11 +106,11 @@ class DanfossAlly:
                 elif status["code"] in ["local_temperature", "ext_measured_rs"]:
                     temperature = float(status["value"]) / 100
                     self.devices[device["id"]][status["code"]] = temperature
-                elif status["code"] == "va_temperature":
+                elif status["code"] == "temp_current":
                     temperature = float(status["value"])
                     temperature = temperature / 10
                     self.devices[device["id"]]["temperature"] = temperature
-                elif status["code"] == "va_humidity":
+                elif status["code"] == "humidity_value":
                     humidity = float(status["value"])
                     humidity = humidity / 10
                     self.devices[device["id"]]["humidity"] = humidity
