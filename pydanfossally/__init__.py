@@ -1,4 +1,5 @@
 """Module for handling Danfoss Ally API communication"""
+
 from __future__ import annotations
 
 import logging
@@ -105,11 +106,11 @@ class DanfossAlly:
                 elif status["code"] in ["local_temperature", "ext_measured_rs"]:
                     temperature = float(status["value"]) / 100
                     self.devices[device["id"]][status["code"]] = temperature
-                elif status["code"] == "va_temperature":
+                elif status["code"] == "temp_current":
                     temperature = float(status["value"])
                     temperature = temperature / 10
                     self.devices[device["id"]]["temperature"] = temperature
-                elif status["code"] == "va_humidity":
+                elif status["code"] == "humidity_value":
                     humidity = float(status["value"])
                     humidity = humidity / 10
                     self.devices[device["id"]]["humidity"] = humidity
@@ -132,7 +133,7 @@ class DanfossAlly:
                     self.devices[device["id"]]["valve_opening"] = status["value"]
                 elif status["code"] == "LoadRadiatorRoomMean":
                     self.devices[device["id"]]["load_room_mean"] = status["value"]
-                elif status["code"] == "sensor_avg_temp":
+                elif status["code"] == "ext_measured_rs":
                     self.devices[device["id"]]["external_sensor_temperature"] = (
                         float(status["value"]) / 10
                     )
@@ -140,10 +141,8 @@ class DanfossAlly:
                     "window_toggle",
                     "switch",
                     "switch_state",
-                    "room_sensor",
                     "heat_supply_request",
                     "boiler_relay",
-                    "factory_reset",
                     "mounting_mode_active",
                     "heat_available",
                     "load_balance_enable",
@@ -163,12 +162,12 @@ class DanfossAlly:
                     "child_lock",
                     "mode",
                     "work_state",
-                    "banner_ctrl",
-                    "Load_estimate",
+                    "load_balance_enable",
                     "fault",
                     "sw_error_code",
                     "ctrl_alg",
                     "adaptation_runstatus",
+                    "SetpointChangeSource",
                 ]:
                     self.devices[device["id"]][status["code"].lower()] = status["value"]
 
