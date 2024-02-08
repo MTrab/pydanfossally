@@ -1,5 +1,6 @@
 """Module for handling Danfoss Ally API communication"""
 
+# pylint: disable=invalid-name
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,7 @@ class DanfossAlly:
             _LOGGER.error("No devices loaded, API connection error?!")
             return
 
-        if not "result" in devices:
+        if "result" not in devices:
             _LOGGER.error("Something went wrong loading devices!")
             return
 
@@ -55,6 +56,7 @@ class DanfossAlly:
             self.handleDeviceData(device)
 
     def handleDeviceData(self, device: dict):
+        """Handle the device data."""
         self.devices[device["id"]] = {}
         self.devices[device["id"]]["isThermostat"] = False
         self.devices[device["id"]]["name"] = device["name"].strip()
@@ -133,7 +135,8 @@ class DanfossAlly:
                     self.devices[device["id"]]["valve_opening"] = status["value"]
                 elif status["code"] == "LoadRadiatorRoomMean":
                     self.devices[device["id"]]["load_room_mean"] = status["value"]
-                elif status["code"] == "ext_measured_rs":
+                elif status["code"] == "sensor_avg_temp":
+                    # elif status["code"] == "ext_measured_rs":
                     self.devices[device["id"]]["external_sensor_temperature"] = (
                         float(status["value"]) / 10
                     )
@@ -186,7 +189,7 @@ class DanfossAlly:
         if device is None or not device:
             _LOGGER.error("No device loaded, API error?!")
             return
-        if not "result" in device:
+        if "result" not in device:
             _LOGGER.error("Something went wrong loading devices!")
             return
 
