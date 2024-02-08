@@ -145,7 +145,6 @@ class DanfossAlly:
                     "switch",
                     "switch_state",
                     "heat_supply_request",
-                    "boiler_relay",
                     "mounting_mode_active",
                     "heat_available",
                     "load_balance_enable",
