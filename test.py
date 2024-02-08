@@ -1,4 +1,5 @@
 """For testing the module."""
+
 from os import environ
 from pprint import pprint
 
