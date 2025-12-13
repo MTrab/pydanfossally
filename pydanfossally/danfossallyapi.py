@@ -75,7 +75,6 @@ class DanfossAllyAPI:
         response = req.json()
         if payload:
             _LOGGER.debug("Command response: %s", response)
-        print("JSON: ", response)
         return response
 
     def _refresh_token(self) -> bool:
