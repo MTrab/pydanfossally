@@ -48,10 +48,10 @@ class DanfossAllyAPI:
             if payload:
                 _LOGGER.debug("Send command: %s: %s", path, json.dumps(payload))
                 req = requests.post(
-                    API_HOST + path, json=payload, headers=headers_data, timeout=10
+                    API_HOST + path, json=payload, headers=headers_data, timeout=30
                 )
             else:
-                req = requests.get(API_HOST + path, headers=headers_data, timeout=10)
+                req = requests.get(API_HOST + path, headers=headers_data, timeout=30)
 
             req.raise_for_status()
         except requests.exceptions.HTTPError as err:
@@ -125,7 +125,7 @@ class DanfossAllyAPI:
                 API_HOST + "/oauth2/token",
                 data=post_data,
                 headers=header_data,
-                timeout=10,
+                timeout=30,
             )
 
             if not req.ok:
