@@ -1,224 +1,229 @@
-"""Module for handling Danfoss Ally API communication"""
-
-# pylint: disable=invalid-name
+"""Async-first module for handling Danfoss Ally API communication."""
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from .danfossallyapi import DanfossAllyAPI
+from .danfossallyapi import DEFAULT_TIMEOUT, DanfossAllyAPI
 
 _LOGGER = logging.getLogger(__name__)
 
+__all__ = ["DanfossAlly", "DanfossAllyAPI", "parse_device_data"]
+
+_SETPOINT_CODES = {
+    "manual_mode_fast",
+    "at_home_setting",
+    "leaving_home_setting",
+    "pause_setting",
+    "holiday_setting",
+    "temp_set",
+}
+_BOOLEAN_CODES = {
+    "window_toggle",
+    "switch",
+    "switch_state",
+    "heat_supply_request",
+    "mounting_mode_active",
+    "heat_available",
+    "load_balance_enable",
+    "radiator_covered",
+}
+_PASSTHROUGH_CODES = {
+    "child_lock",
+    "mode",
+    "work_state",
+    "load_balance_enable",
+    "fault",
+    "sw_error_code",
+    "ctrl_alg",
+    "adaptation_runstatus",
+    "SetpointChangeSource",
+}
+
+
+def _normalize_bool(value: Any) -> bool | None:
+    """Convert API booleans that may arrive as bools or strings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true"
+    return None
+
+
+def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
+    """Convert raw API device payloads into the library's best-effort model."""
+    parsed: dict[str, Any] = {
+        "isThermostat": False,
+        "name": device.get("name", "").strip(),
+        "online": device.get("online", False),
+        "update": device.get("update_time"),
+        "floor_sensor": False,
+    }
+
+    if "model" in device:
+        parsed["model"] = device["model"]
+    elif "device_type" in device:
+        parsed["model"] = device["device_type"]
+
+    statuses = device.get("status") or []
+    for status in statuses:
+        if status.get("code") == "floor_sensor":
+            parsed["floor_sensor"] = bool(status.get("value"))
+            break
+
+    for status in statuses:
+        code = status.get("code")
+        value = status.get("value")
+
+        try:
+            if code in _SETPOINT_CODES:
+                parsed[code] = float(value) / 10
+                parsed["isThermostat"] = True
+            elif code == "temp_current":
+                parsed["temperature"] = float(value) / 10
+            elif code == "MeasuredValue" and parsed["floor_sensor"]:
+                parsed["floor_temperature"] = float(value) / 10
+            elif code in {"upper_temp", "lower_temp", "floor_temp_min", "floor_temp_max"}:
+                parsed[code] = float(value) / 10
+            elif code in {"local_temperature", "ext_measured_rs"}:
+                parsed[code] = float(value) / 100
+            elif code == "humidity_value":
+                parsed["humidity"] = float(value) / 10
+            elif code == "battery_percentage":
+                parsed["battery"] = value
+            elif code == "window_state":
+                parsed["window_open"] = value == "open"
+            elif code == "output_status":
+                parsed["output_status"] = value == "active"
+            elif code == "pi_heating_demand":
+                parsed["valve_opening"] = value
+            elif code == "LoadRadiatorRoomMean":
+                parsed["load_room_mean"] = value
+            elif code == "sensor_avg_temp":
+                parsed["external_sensor_temperature"] = float(value) / 10
+            elif code in _BOOLEAN_CODES:
+                normalized = _normalize_bool(value)
+                if normalized is not None:
+                    parsed[code.lower()] = normalized
+
+            if code in _PASSTHROUGH_CODES:
+                parsed[code.lower()] = value
+        except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
+            _LOGGER.debug(
+                "Failed to handle data for device %s, status code %s: %s",
+                device.get("id"),
+                code,
+                err,
+            )
+
+    return parsed
+
 
 class DanfossAlly:
-    """Danfoss Ally API connector."""
+    """Async-first Danfoss Ally API connector."""
 
-    def __init__(self) -> None:
-        """Init the API connector variables."""
+    def __init__(
+        self,
+        api: DanfossAllyAPI | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        """Initialize the connector."""
         self._authorized = False
-        self._token = None
-        self.devices = {}
+        self._token: str | None = None
+        self.devices: dict[str, dict[str, Any]] = {}
+        self._api = api or DanfossAllyAPI(timeout=timeout)
 
-        self._api = DanfossAllyAPI()
+    async def __aenter__(self) -> DanfossAlly:
+        """Allow async context manager usage."""
+        return self
 
-    def initialize(self, key: str, secret: str) -> bool:
+    async def __aexit__(self, *_: object) -> None:
+        """Close the underlying API client."""
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close open resources."""
+        await self._api.aclose()
+
+    async def initialize(self, key: str, secret: str) -> bool:
         """Authorize and initialize the connection."""
-
-        token = self._api.getToken(key, secret)
+        token = await self._api.get_token(key, secret)
 
         if token is False:
             self._authorized = False
             _LOGGER.error("Error in authorization")
             return False
 
-        _LOGGER.debug("Token received: %s", self._api.token)
         self._token = self._api.token
         self._authorized = True
-        return self._authorized
+        return True
 
-    def getDeviceList(self) -> None:
-        """Get device list."""
-        devices = self._api.get_devices()
+    async def get_devices(self) -> dict[str, dict[str, Any]]:
+        """Fetch and parse all devices."""
+        response = await self._api.get_devices()
+        if not response or "result" not in response:
+            _LOGGER.error("Something went wrong loading devices")
+            return self.devices
 
-        if devices is None:
-            _LOGGER.error("No devices loaded, API error?!")
-            return
+        self.devices = {}
+        for device in response["result"]:
+            self._store_device(device)
 
-        if not devices:
-            _LOGGER.error("No devices loaded, API connection error?!")
-            return
+        return self.devices
 
-        if "result" not in devices:
-            _LOGGER.error("Something went wrong loading devices!")
-            return
+    async def get_device(self, device_id: str) -> dict[str, Any] | None:
+        """Fetch one device and parse it into the cached device map."""
+        response = await self._api.get_device(device_id)
+        if not response or "result" not in response:
+            _LOGGER.error("Something went wrong loading device %s", device_id)
+            return None
 
-        for device in devices["result"]:
-            self.handleDeviceData(device)
+        return self._store_device(response["result"])
 
-    def handleDeviceData(self, device: dict):
-        """Handle the device data."""
-        self.devices[device["id"]] = {}
-        self.devices[device["id"]]["isThermostat"] = False
-        self.devices[device["id"]]["name"] = device["name"].strip()
-        self.devices[device["id"]]["online"] = device["online"]
-        self.devices[device["id"]]["update"] = device["update_time"]
-        if "model" in device:
-            self.devices[device["id"]]["model"] = device["model"]
-        elif "device_type" in device:
-            self.devices[device["id"]]["model"] = device["device_type"]
+    async def get_device_sub_devices(self, device_id: str) -> list[dict[str, Any]]:
+        """Fetch the spec-defined sub-devices endpoint."""
+        response = await self._api.get_device_sub_devices(device_id)
+        return response.get("result", [])
 
-        bHasFloorSensor = False
-        for status in device["status"]:
-            if status["code"] == "floor_sensor":
-                bHasFloorSensor = status["value"]
-        self.devices[device["id"]]["floor_sensor"] = bHasFloorSensor
+    async def get_device_status(self, device_id: str) -> list[dict[str, Any]]:
+        """Fetch the latest raw status entries for one device."""
+        response = await self._api.get_device_status(device_id)
+        return response.get("result", [])
 
-        for status in device["status"]:
-            try:
-                if status["code"] in [
-                    "manual_mode_fast",
-                    "at_home_setting",
-                    "leaving_home_setting",
-                    "pause_setting",
-                    "holiday_setting",
-                    "temp_set",
-                ]:
-                    setpoint = float(status["value"])
-                    setpoint = setpoint / 10
-                    self.devices[device["id"]][status["code"]] = setpoint
-                    self.devices[device["id"]]["isThermostat"] = True
-                elif status["code"] == "temp_current":
-                    temperature = float(status["value"])
-                    temperature = temperature / 10
-                    self.devices[device["id"]]["temperature"] = temperature
-                elif (
-                    status["code"] == "MeasuredValue" and bHasFloorSensor
-                ):  # Floor sensor
-                    temperature = float(status["value"])
-                    temperature = temperature / 10
-                    self.devices[device["id"]]["floor_temperature"] = temperature
-                elif status["code"] in [
-                    "upper_temp",
-                    "lower_temp",
-                    "floor_temp_min",
-                    "floor_temp_max",
-                ]:
-                    temperature = float(status["value"]) / 10
-                    self.devices[device["id"]][status["code"]] = temperature
-                elif status["code"] in ["local_temperature", "ext_measured_rs"]:
-                    temperature = float(status["value"]) / 100
-                    self.devices[device["id"]][status["code"]] = temperature
-                elif status["code"] == "temp_current":
-                    temperature = float(status["value"])
-                    temperature = temperature / 10
-                    self.devices[device["id"]]["temperature"] = temperature
-                elif status["code"] == "humidity_value":
-                    humidity = float(status["value"])
-                    humidity = humidity / 10
-                    self.devices[device["id"]]["humidity"] = humidity
-                elif status["code"] == "battery_percentage":
-                    battery = status["value"]
-                    self.devices[device["id"]]["battery"] = battery
-                elif status["code"] == "window_state":
-                    window = status["value"]
-                    if window == "open":
-                        self.devices[device["id"]]["window_open"] = True
-                    else:
-                        self.devices[device["id"]]["window_open"] = False
-                elif status["code"] == "output_status":
-                    valve = status["value"]
-                    if valve == "active":
-                        self.devices[device["id"]]["output_status"] = True
-                    else:
-                        self.devices[device["id"]]["output_status"] = False
-                elif status["code"] == "pi_heating_demand":
-                    self.devices[device["id"]]["valve_opening"] = status["value"]
-                elif status["code"] == "LoadRadiatorRoomMean":
-                    self.devices[device["id"]]["load_room_mean"] = status["value"]
-                elif status["code"] == "sensor_avg_temp":
-                    # elif status["code"] == "ext_measured_rs":
-                    self.devices[device["id"]]["external_sensor_temperature"] = (
-                        float(status["value"]) / 10
-                    )
-                elif status["code"] in [
-                    "window_toggle",
-                    "switch",
-                    "switch_state",
-                    "heat_supply_request",
-                    "mounting_mode_active",
-                    "heat_available",
-                    "load_balance_enable",
-                    "radiator_covered",
-                ]:
-                    if isinstance(status["value"], bool):
-                        self.devices[device["id"]][status["code"].lower()] = status[
-                            "value"
-                        ]
+    async def set_temperature(
+        self,
+        device_id: str,
+        temp: float,
+        code: str = "manual_mode_fast",
+    ) -> bool:
+        """Update temperature setpoint for one device."""
+        return await self._api.set_temperature(device_id, int(temp * 10), code)
 
-                    elif isinstance(status["value"], str):
-                        self.devices[device["id"]][status["code"].lower()] = (
-                            status["value"].lower() == "true"
-                        )
+    async def set_mode(self, device_id: str, mode: str) -> bool:
+        """Update operating mode for one device."""
+        return await self._api.set_mode(device_id, mode)
 
-                if status["code"] in [
-                    "child_lock",
-                    "mode",
-                    "work_state",
-                    "load_balance_enable",
-                    "fault",
-                    "sw_error_code",
-                    "ctrl_alg",
-                    "adaptation_runstatus",
-                    "SetpointChangeSource",
-                ]:
-                    self.devices[device["id"]][status["code"].lower()] = status["value"]
+    async def send_command(
+        self,
+        device_id: str,
+        listofcommands: list[tuple[str, Any]],
+    ) -> bool:
+        """Send generic commands for one device."""
+        return await self._api.send_command(device_id, listofcommands)
 
-            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
-                _LOGGER.debug(
-                    "Failed to handle data for device %s, Status code: %s, Error: %s",
-                    device["id"],
-                    status["code"],
-                    err,
-                )
-
-    def getDevice(self, device_id: str) -> None:
-        """Get device data."""
-        device = self._api.get_device(device_id)
-
-        if device is None or not device:
-            _LOGGER.error("No device loaded, API error?!")
-            return
-        if "result" not in device:
-            _LOGGER.error("Something went wrong loading devices!")
-            return
-
-        self.handleDeviceData(device["result"])
+    def _store_device(self, device: dict[str, Any]) -> dict[str, Any]:
+        """Parse and cache one device payload."""
+        parsed = parse_device_data(device)
+        device_id = device["id"]
+        self.devices[device_id] = parsed
+        return parsed
 
     @property
     def authorized(self) -> bool:
-        """Return authorized status."""
+        """Return authorization state."""
         return self._authorized
 
-    def setTemperature(
-        self, device_id: str, temp: float, code="manual_mode_fast"
-    ) -> bool:
-        """Updates temperature setpoint for given device."""
-        temperature = int(temp * 10)
-
-        result = self._api.set_temperature(device_id, temperature, code)
-
-        return result
-
-    def setMode(self, device_id: str, mode: str) -> bool:
-        """Updates operating mode for given device."""
-        result = self._api.set_mode(device_id, mode)
-
-        return result
-
-    def sendCommand(
-        self, device_id: str, listofcommands: list[tuple[str, str]]
-    ) -> bool:
-        """Send list of commands for given device."""
-        result = self._api.send_command(device_id, listofcommands)
-
-        return result
+    @property
+    def token(self) -> str | None:
+        """Return the cached bearer token."""
+        return self._token
