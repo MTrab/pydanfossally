@@ -3,15 +3,27 @@
 from http.client import HTTPException
 
 
-class NotFoundError(HTTPException):
+class APIError(HTTPException):
+    """Base exception for HTTP errors returned by the Ally API."""
+
+
+class BadRequestError(APIError):
+    """Raised when the API rejects the request payload."""
+
+
+class RateLimitError(APIError):
+    """Raised when the API throttles requests."""
+
+
+class NotFoundError(APIError):
+    """Raised when a resource cannot be found."""
+
+
+class InternalServerError(APIError):
     ...
 
 
-class InternalServerError(HTTPException):
-    ...
-
-
-class UnauthorizedError(HTTPException):
+class UnauthorizedError(APIError):
     ...
 
 

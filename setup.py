@@ -23,6 +23,6 @@ setuptools.setup(
     project_urls={
         "Bug Tracker": "https://github.com/mtrab/pydanfossally/issues",
     },
-    install_requires=["requests>=2.28.0"],
-    version="0.0.30",
+    install_requires=["httpx>=0.27.0"],
+    version="0.1.0",
 )

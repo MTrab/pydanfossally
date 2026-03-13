@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Single run - Basic test",
+            "name": "Basic Debug using example.py",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/test.py",
+            "program": "${workspaceFolder}/example.py",
             "console": "integratedTerminal",
             "justMyCode": true
         },
