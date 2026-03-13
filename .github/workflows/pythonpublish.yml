@@ -1,34 +1,31 @@
-# This workflows will upload a Python Package using Twine when a release is created
-# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
-
-name: Upload Python Package
+name: Deploy to PyPI
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/pydanfossally
-    permissions:
-      id-token: write
+    env:
+      POETRY_VIRTUALENVS_CREATE: "false"
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.14'
-      - name: Install dependencies
+      - uses: actions/checkout@v3
+
+      - name: Install poetry
         run: |
-          python -m pip install --upgrade pip
-          pip install setuptools wheel twine build
-          pip install -r requirements.txt
-      - name: Build package
-        run: python -m build
-      - name: Publish package
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          pipx install poetry
+          pipx inject poetry poetry-bumpversion
+
+      - name: Build
+        run: |
+          poetry version ${{ github.ref_name }}
+          poetry build
+
+      - name: Publish
+        run: |
+          poetry config pypi-token.pypi ${{ secrets.PYPI_TOKEN }}
+          poetry publish
+
+      # NOTE: Make sure you have added PYPI_API_TOKEN repository secret

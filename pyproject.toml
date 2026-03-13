@@ -1,6 +1,23 @@
 [build-system]
-requires = [ "setuptools>=41", "wheel", "setuptools-git-versioning", ]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
 
-[tool.setuptools-git-versioning]
-enabled = true
+[project]
+name = "pydanfossally"
+version = "0.1.0"
+description = "Danfoss Ally API library"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Malene Trab", email = "malene@trab.dk" }]
+requires-python = ">=3.9,<4.0"
+dependencies = ["httpx>=0.27.0,<1.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/mtrab/pydanfossally"
+Repository = "https://github.com/mtrab/pydanfossally"
+
+[tool.poetry]
+packages = [{ include = "pydanfossally" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
