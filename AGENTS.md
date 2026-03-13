@@ -23,3 +23,4 @@
 *   Always answer in Danish unless you are told different in a session
 *   Documentation should ALWAYS be in english
 *   Keep documentation up-to-date with current code
+*   Danfoss Ally API OpenSpec is located in `/docs/openapi-spec`

@@ -1,0 +1,627 @@
+openapi: 3.0.3
+info:
+  title: Danfoss Ally™ API
+  version: 2.4.0
+  x-audience: external-public
+  x-api-id: d0184f38-1337-11f7-9c56-68f728c1ba71
+  description: "The Danfoss Ally™ API is used to retrieve data from Danfoss Ally™ Devices such as Danfoss Ally™ eTRV or a Danfoss Icon room thermostat. The devices are accessed by using a user account registered in the Danfoss Ally™ mobile app.  \n## Use this API to retrieve data such as: \n* Measured room temperature \n* Measured temperature \n## Use this API to control settings such as: \n* Target room temperature  \n    ## How to get acess\nTo get access to a Ally™ System through the API the following ordered steps must be completed:\n1. Create an account in the Ally™ App with an e-mail.\n2. Setup the system in the Ally™ app.\n3. Go to developer.danfoss.com and create an account with the same e-mail as used in the Ally™ app for the Ally™ system (OBS: the systems are case-sensitive).\n4. Now register an app with the created user at developer.danfoss.com and create an API key in order to get the needed API keys.\n5. Enable the Ally™ API for the created app at developer.danfoss.com to access the Key and Secret under API Keys in the portal.\n6. Apply the keys as header as described [here](https://developer.danfoss.com/get-started). ClientID is the specific key id with the according key sectret.\n\n## Authentication\nAccess tokens has a time-to-live at 60 minutes and therefor it is expect that the token is received and not renewed before each call.\n    \n## Throttling\nThe free API in general has throttling enabled which apply across the API. Throttling kicking in can be identified by receiving status code 429 - too many request. E.g. the /token endpoint has a maximum of 5 calls per second.\n\n## Further information\nFind more information about the Danfoss Ally™ products at the [Danfoss Ally™ product page](http://ally.danfoss.com)  \n\n## Develop with Danfoss\n_Thank you for showing interest in Danfoss API’s. We are very conscious about the importance of being open to the world and open to integrate with partners. This is how we can Engineer Tomorrow – together._ \n\n_Thank you for developing with Danfoss._\n\n### Disclaimer\n_Danfoss offers an open access to the Danfoss Ally™ smart heating solution and is committed to ensuring correct and maintained data points in the API document. Danfoss cannot be held responsible for any typing mistakes, incorrect data or discontinued endpoints or functionality in the future._   \n\n### Support\n_Unless you have a formal partnership with Danfoss we do not offer support on the cloud integration at the 3rd party side of the integration. Domestic privately developed solutions are not supported by Danfoss._ "
+  contact:
+    name: Danfoss
+    url: 'http://ally.danfoss.com'
+    email: ally@danfoss.com
+servers:
+  - url: 'https://api.danfoss.com/ally'
+security:
+  - OAuth2: []
+tags:
+  - name: device-management
+    description: Get Device information
+  - name: device-control
+    description: Change device settings
+paths:
+  '/devices':
+    get:
+      summary: Get the list of users devices.
+      tags:
+        - device-management
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/devicesResponse'
+              examples:
+                example-1:
+                  value:
+                    result:
+                      - active_time: 1605086157
+                        create_time: 1591615719
+                        id: bff29edfd82316bc2bbrlu
+                        name: Danfoss Ally™ Gateway
+                        online: true
+                        status: []
+                        sub: false
+                        time_zone: '+01:00'
+                        update_time: 1605296207
+                        device_type: Danfoss Ally™ Gateway
+                      - active_time: 1605087321
+                        create_time: 1605086381
+                        id: bf80b9a848085c5902tiwy
+                        name: Icon RT 8
+                        online: true
+                        status:
+                          - code: temp_set
+                            value: 200
+                          - code: mode
+                            value: hot
+                        sub: true
+                        time_zone: '+08:00'
+                        update_time: 1605482266
+                        device_type: Icon RT
+                    t: 1604188800
+        'default':
+          $ref: '#/components/responses/Default_Error'
+      operationId: get-devices
+      description: 'You can query the details about operable devices, including properties and the latest status of the device.'
+  '/devices/{device_id}':
+    parameters:
+      - schema:
+          type: string
+        name: device_id
+        in: path
+        required: true
+        description: Device ID
+    get:
+      summary: Get device details
+      tags:
+        - device-management
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/deviceResponse'
+              examples:
+                example-1:
+                  value:
+                    result:
+                      active_time: 1605087321
+                      create_time: 1605086381
+                      id: bf80b9a848085c5902tiwj
+                      name: Icon RT 8
+                      online: true
+                      status:
+                        - code: temp_set
+                          value: 200
+                        - code: mode
+                          value: hot
+                      sub: true
+                      time_zone: '+08:00'
+                      update_time: 1605482266
+                      device_type: Icon RT
+                    t: 1604188800
+        'default':
+          $ref: '#/components/responses/Default_Error'
+      operationId: get-devices-deviceid
+      description: Get device details
+  '/devices/{device_id}/sub-devices':
+    parameters:
+      - schema:
+          type: string
+        name: device_id
+        in: path
+        required: true
+        description: device id
+    get:
+      summary: Query the device list under the gateway
+      tags:
+        - device-control
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/deviceSubDevicesResponse'
+              examples:
+                example-1:
+                  value:
+                    result:
+                      - active_time: 1605087321
+                        id: bf80b9a848085c5902tiwk
+                        name: Icon RT 8
+                        online: true
+                        update_time: 1605482266
+                      - active_time: 1605087316
+                        id: bfa86c7c990b475106opxw
+                        name: Icon RT 7
+                        online: true
+                        update_time: 1605482265
+                      - active_time: 1605087311
+                        id: bf06a7e25175e6320faks2
+                        name: Icon RT 6
+                        online: true
+                        update_time: 1605482265
+                      - active_time: 1605087306
+                        id: bfab5e8a9682d58df5780i
+                        name: Icon RT 5
+                        online: true
+                        update_time: 1605482265
+                      - active_time: 1605087294
+                        id: bff5ddee45ad98e6d9wsk8
+                        name: Icon Zigbee Module 2
+                        online: true
+                        update_time: 1605478687
+                      - active_time: 1605089263
+                        id: bf66a9d92e9546af86q4bz
+                        name: Danfoss Zigbee Repeater
+                        online: true
+                        update_time: 1605296206
+                      - active_time: 1605102783
+                        id: bfec0fae4b350eba01xv2l
+                        name: Danfoss Ally™ Radiator Thermostat
+                        online: true
+                        update_time: 1605296206
+                    t: 1604188800
+        'default':
+          $ref: '#/components/responses/Default_Error'
+      operationId: get-devices-device_id-specifications
+      description: Query the device list under the gateway
+  '/devices/{device_id}/commands':
+    parameters:
+      - schema:
+          type: string
+        name: device_id
+        in: path
+        required: true
+    post:
+      summary: Issue commands
+      tags:
+        - device-control
+      operationId: post-devices-device_id-commands
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/deviceCommandsResponse'
+              examples:
+                example-1:
+                  value:
+                    result: true
+                    t: 1604188800
+        '400':
+          $ref: '#/components/responses/Bad_Request'
+        'default':
+          $ref: '#/components/responses/Default_Error'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/deviceCommands'
+            examples:
+              example-1:
+                value:
+                  commands:
+                    - code: temp_set
+                      value: 200
+      description: Write settings to a Danfoss Ally™ device.
+  '/devices/{device_id}/status':
+    parameters:
+      - schema:
+          type: string
+        name: device_id
+        in: path
+        required: true
+        description: device id
+    get:
+      summary: Query the latest status of a Danfoss Ally™ device based on the device id.
+      tags:
+        - device-control
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/deviceStatusResponse'
+              examples:
+                example-1:
+                  value:
+                    result:
+                      - code: temp_set
+                        value: 200
+                      - code: mode
+                        value: hot
+                    t: 1604188800
+        'default':
+          $ref: '#/components/responses/Default_Error'
+      operationId: get-devices-device_id-status
+      description: Query the latest status of the device based on the device id.
+components:
+  schemas:
+    Error:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI that identifies the problem type.
+          default: 'about:blank'
+          example: 'https://developer.danfoss.com/error-code-reference#token-or-client-authentication-credentials-missing'
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type
+          default: Error
+          example: Bad request
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 600
+          exclusiveMinimum: true
+          exclusiveMaximum: true
+          example: 400
+        detail:
+          type: string
+          default: Error
+          description: Detailed explanation specific to this occurrence of the problem. Can be json string.
+          example: Error response from target.
+        message_id:
+          type: string
+          description: Unique error message id.
+          example: rrt-7125511224420475346-b-geu1-6562-8730625-1
+    devicesResponse:
+      title: devicesResponse
+      type: object
+      x-examples:
+        example-1:
+          result:
+            - active_time: 1605086157
+              create_time: 1591615719
+              id: bff29edfd82316bc2bbrlu
+              name: Smart Zigbee Gateway
+              online: true
+              status: []
+              sub: false
+              time_zone: '+01:00'
+              update_time: 1605296207
+              device_type: Danfoss Ally™ Gateway
+            - active_time: 1605087321
+              create_time: 1605086381
+              id: bf80b9a848085c5902tiwh
+              name: Icon RT 8
+              online: true
+              status:
+                - code: temp_set
+                  value: 200
+                - code: mode
+                  value: hot
+              sub: true
+              time_zone: '+08:00'
+              update_time: 1605482266
+              device_type: Icon RT
+      description: Device list
+      properties:
+        result:
+          type: array
+          items:
+            $ref: '#/components/schemas/device'
+        t:
+          type: integer
+          description: Time of the response
+          example: 1571201730542
+          format: int64
+    device:
+      title: device
+      type: object
+      x-examples:
+        example-1:
+          active_time: 1605087321
+          create_time: 1605086381
+          id: bf80b9a848085c5902tiwl
+          name: Icon RT 8
+          online: true
+          status:
+            - code: temp_set
+              value: 200
+            - code: mode
+              value: hot
+          sub: true
+          time_zone: '+08:00'
+          update_time: 1605482266
+          device_type: Icon RT
+      description: Values of a device
+      properties:
+        active_time:
+          type: integer
+          description: Time when last seen online
+          example: 1584063323
+          format: int64
+        create_time:
+          type: integer
+          description: Time when the device was setup
+          example: 1575017570
+          format: int64
+        id:
+          type: string
+          description: Unique identifier of the device
+        name:
+          type: string
+          description: User specified name of the device
+        online:
+          description: Online status of the device
+          type: boolean
+        status:
+          type: array
+          description: Current settings for the device
+          items:
+            type: object
+            description: ''
+            properties:
+              code:
+                type: string
+                description: Setting
+              value:
+                oneOf:
+                  - type: string
+                  - type: integer
+                  - type: boolean
+                description: Value of the setting
+        sub:
+          description: 'Indicates whether this device is controlled by a gateway. True: yes, false: no'
+          type: boolean
+        time_zone:
+          type: string
+          description: Time zone
+          example: '+08:00'
+        update_time:
+          type: integer
+          description: Last update of device setting
+          example: 1584939489
+          format: int64
+        device_type:
+          type: string
+          description: Type of device
+    deviceResponse:
+      title: deviceResponse
+      type: object
+      x-examples:
+        example-1:
+          result:
+            active_time: 1605087321
+            create_time: 1605086381
+            id: bf80b9a848085c5902tiwm
+            name: Icon RT 8
+            online: true
+            status:
+              - code: temp_set
+                value: 200
+              - code: mode
+                value: hot
+            sub: true
+            time_zone: '+08:00'
+            update_time: 1605482266
+            device_type: Icon RT
+          t: 1604188800
+      description: Response when requesting device info
+      properties:
+        result:
+          $ref: '#/components/schemas/device'
+        t:
+          type: integer
+          description: Time of the response
+          example: 1561348644346
+          format: int64
+    deviceSubDevice:
+      title: deviceSubDevice
+      type: object
+      x-examples:
+        example-1:
+          active_time: 1605087321
+          id: bf80b9a848085c5902tiwn
+          name: Icon RT 8
+          online: true
+          update_time: 1605482266
+      description: Values of a device controlled by a gateway
+      properties:
+        active_time:
+          type: integer
+          description: Time when last seen online
+          example: 1586169374
+          format: int64
+        id:
+          type: string
+          description: Unique identifier of the device
+        name:
+          type: string
+          description: User specified name of the device
+        online:
+          type: boolean
+          description: Online status of the device
+        update_time:
+          type: integer
+          description: Last update of device setting
+          example: 1586169379
+          format: int64
+    deviceSubDevicesResponse:
+      title: deviceSubDevicesResponse
+      type: object
+      x-examples:
+        example-1:
+          result:
+            - active_time: 1605087321
+              id: bf80b9a848085c5902tiwi
+              name: Icon RT 8
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605482266
+            - active_time: 1605087316
+              id: bfa86c7c990b475106opxw
+              name: Icon RT 7
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605482265
+            - active_time: 1605087311
+              id: bf06a7e25175e6320faks2
+              name: Icon RT 6
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605482265
+            - active_time: 1605087306
+              id: bfab5e8a9682d58df5780i
+              name: Icon RT 5
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605482265
+            - active_time: 1605087294
+              id: bff5ddee45ad98e6d9wsk8
+              name: Icon Zigbee Module 2
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605478687
+            - active_time: 1605089263
+              id: bf66a9d92e9546af86q4bz
+              name: Danfoss Zigbee Repeater
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605296206
+            - active_time: 1605102783
+              id: bfec0fae4b350eba01xv2l
+              name: Danfoss Ally™ Radiator Thermostat
+              device_type: Danfoss Ally™ Radiator Thermostat
+              online: true
+              update_time: 1605296206
+          t: 1604188800
+      description: Response when requesting devices controlled by a gateway.
+      properties:
+        result:
+          type: array
+          items:
+            $ref: '#/components/schemas/deviceSubDevice'
+        t:
+          type: integer
+          description: Time of the response
+          example: 1571201730542
+          format: int64
+    deviceStatus:
+      title: deviceStatus
+      type: object
+      description: Values of a device settings
+      x-examples:
+        example-1:
+          code: temp_set
+          value: 200
+      properties:
+        code:
+          type: string
+          description: Code
+        value:
+          oneOf:
+            - type: string
+            - type: integer
+            - type: boolean
+          description: Value
+    deviceStatusResponse:
+      title: deviceStatusResponse
+      type: object
+      x-examples:
+        example-1:
+          result:
+            - code: temp_set
+              value: 200
+            - code: mode
+              value: hot
+          t: 1604188800
+      description: Response when requesting device status
+      properties:
+        result:
+          type: array
+          description: Device Status
+          items:
+            $ref: '#/components/schemas/deviceStatus'
+        t:
+          type: integer
+          description: Time of the response
+          example: 1545447665981
+          format: int64
+    deviceCommands:
+      title: deviceCommands
+      type: object
+      x-examples:
+        example-1:
+          commands:
+            - code: temp_set
+              value: 220
+      properties:
+        commands:
+          type: array
+          description: List of commands
+          items:
+            type: object
+            description: List of commands
+            properties:
+              code:
+                type: string
+                description: Setting
+              value:
+                oneOf:
+                  - type: string
+                  - type: integer
+                  - type: boolean
+                description: Value of the setting
+      description: Request for applying settings to a device
+    deviceCommandsResponse:
+      title: deviceCommandsResponse
+      type: object
+      x-examples:
+        example-1:
+          t: 1551851043862
+      properties:
+        t:
+          type: integer
+          description: Time when the setting was applied
+          example: 1551851043862
+          format: int64
+      description: Response when applying a setting to a device
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: 'https://api.danfoss.com/oauth2/token'
+  responses:
+    Bad_Request:
+      description: Bad Request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            default:
+              value:
+                type: 'about:blank'
+                title: Bad Request
+                status: 400
+                detail: 'error in request header, path or body'
+                message-id: 'rrt-7125511224420475346-b-geu1-6562-8730625-1'
+    Default_Error:
+      description: Default Error
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            default:
+              value:
+                type: 'about:blank'
+                title: "Not Found"
+                status: 404
+                message-id: 'rrt-7125511224420475346-b-geu1-6562-8730625-1'
