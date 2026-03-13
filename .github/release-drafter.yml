@@ -10,8 +10,6 @@ categories:
 
   - title: '🐛 Bug Fixes'
     labels:
-      - 'fix'
-      - 'bugfix'
       - 'bug'
 
   - title: '🧰 Maintenance'
@@ -44,3 +42,24 @@ autolabeler:
   - label: 'feature request'
     branch:
       - '/feature\/.+/'
+  - label: 'enhancement'
+    branch:
+      - '/enhancement\/.+/'
+  - label: 'chore'
+    branch:
+      - '/chore\/.+/'
+  - label: 'dependencies'
+    branch:
+      - '/dependabot\/.+/'
+  - label: 'documentation'
+    branch:
+      - '/documentation\/.+/'
+  - label: 'patch'
+    branch:
+      - '/patch\/.+/'
+      - '/dependabot\/.+/'
+      - '/chore\/.+/'
+      - '/feature\/.+/'
+      - '/fix\/.+/'
+      - '/enhancement\/.+/'
+      - '/documentation\/.+/'
