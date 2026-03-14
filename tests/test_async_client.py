@@ -103,6 +103,25 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(devices["device-1"]["name"], "Living room")
         self.assertEqual(devices["device-1"]["temperature"], 20.3)
         self.assertTrue(devices["device-1"]["window_open"])
+        self.assertEqual(devices["device-1"]["last_response_time"], 1)
+
+    async def test_get_device_maps_last_response_time(self) -> None:
+        """Single-device reads should keep the API response timestamp."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1":
+                return httpx.Response(200, json={"result": DEVICE_PAYLOAD, "t": 12})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        device = await ally.get_device("device-1")
+
+        assert device is not None
+        self.assertEqual(device["last_response_time"], 12)
 
     async def test_get_device_status_and_sub_devices(self) -> None:
         """Spec-defined read-only endpoints should be available."""
@@ -305,3 +324,9 @@ class ParseDeviceDataTests(unittest.TestCase):
         self.assertTrue(parsed["switch_state"])
         self.assertEqual(parsed["mode"], "manual")
         self.assertTrue(parsed["isThermostat"])
+
+    def test_parse_device_data_accepts_last_response_time(self) -> None:
+        """The parser should expose the API response timestamp when provided."""
+        parsed = parse_device_data(DEVICE_PAYLOAD, last_response_time=1773499838298)
+
+        self.assertEqual(parsed["last_response_time"], 1773499838298)

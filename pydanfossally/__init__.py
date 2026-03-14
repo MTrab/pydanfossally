@@ -62,7 +62,11 @@ def _normalize_bool(value: Any) -> bool | None:
     return None
 
 
-def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
+def parse_device_data(
+    device: dict[str, Any],
+    *,
+    last_response_time: int | None = None,
+) -> dict[str, Any]:
     """Convert raw API device payloads into the library's best-effort model."""
     parsed: dict[str, Any] = {
         "isThermostat": False,
@@ -71,6 +75,8 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
         "update": device.get("update_time"),
         "floor_sensor": False,
     }
+    if last_response_time is not None:
+        parsed["last_response_time"] = last_response_time
 
     if "model" in device:
         parsed["model"] = device["model"]
@@ -195,7 +201,7 @@ class DanfossAlly:
 
         self.devices = {}
         for device in response["result"]:
-            self._store_device(device)
+            self._store_device(device, last_response_time=response.get("t"))
 
         return self.devices
 
@@ -206,7 +212,10 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading device %s", device_id)
             return None
 
-        return self._store_device(response["result"])
+        return self._store_device(
+            response["result"],
+            last_response_time=response.get("t"),
+        )
 
     async def get_device_sub_devices(self, device_id: str) -> list[dict[str, Any]]:
         """Fetch the spec-defined sub-devices endpoint."""
@@ -259,9 +268,14 @@ class DanfossAlly:
         """Send generic commands for one device."""
         return await self._api.send_command(device_id, listofcommands)
 
-    def _store_device(self, device: dict[str, Any]) -> dict[str, Any]:
+    def _store_device(
+        self,
+        device: dict[str, Any],
+        *,
+        last_response_time: int | None = None,
+    ) -> dict[str, Any]:
         """Parse and cache one device payload."""
-        parsed = parse_device_data(device)
+        parsed = parse_device_data(device, last_response_time=last_response_time)
         device_id = device["id"]
         self.devices[device_id] = parsed
         return parsed
