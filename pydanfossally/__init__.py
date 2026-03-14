@@ -227,6 +227,21 @@ class DanfossAlly:
         response = await self._api.get_device_status(device_id)
         return response.get("result", [])
 
+    async def refresh_device(self, device_id: str) -> dict[str, Any] | None:
+        """Refresh one cached device via its dedicated device endpoint."""
+        return await self.get_device(device_id)
+
+    async def refresh_devices(self) -> dict[str, dict[str, Any]]:
+        """Refresh all cached devices one-by-one via their dedicated endpoints."""
+        device_ids = list(self.devices)
+        if not device_ids:
+            return await self.get_devices()
+
+        for device_id in device_ids:
+            await self.refresh_device(device_id)
+
+        return self.devices
+
     async def set_temperature(
         self,
         device_id: str,

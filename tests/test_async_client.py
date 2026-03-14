@@ -150,6 +150,39 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status[0]["code"], "temp_set")
         self.assertEqual(sub_devices[0]["id"], "child-1")
 
+    async def test_refresh_device_uses_single_device_endpoint(self) -> None:
+        """Per-device refresh should only use the single-device payload."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1":
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            **DEVICE_PAYLOAD,
+                            "status": [
+                                {"code": "temp_set", "value": 230},
+                                {"code": "temp_current", "value": 205},
+                                {"code": "mode", "value": "manual"},
+                            ],
+                        },
+                        "t": 13,
+                    },
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        device = await ally.refresh_device("device-1")
+
+        assert device is not None
+        self.assertEqual(device["temp_set"], 23.0)
+        self.assertEqual(device["temperature"], 20.5)
+        self.assertEqual(device["last_response_time"], 13)
+
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
 
