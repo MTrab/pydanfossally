@@ -278,6 +278,35 @@ class DanfossAlly:
         """Apply a manual temperature override for one device."""
         return await self.set_temperature_for_mode(device_id, temp, "manual")
 
+    async def set_external_temperature(
+        self,
+        device_id: str,
+        temperature: float | None,
+    ) -> bool:
+        """Set an external sensor temperature and enable covered-radiator mode."""
+        temp_10 = -800 if temperature is None else int(round(temperature * 10))
+        temp_100 = -8000 if temperature is None else int(round(temperature * 100))
+        return await self.send_command(
+            device_id,
+            [
+                ("radiator_covered", True),
+                ("ext_measured_rs", temp_100),
+                ("sensor_avg_temp", temp_10),
+            ],
+        )
+
+    async def set_radiator_covered(self, device_id: str, covered: bool) -> bool:
+        """Set covered-radiator mode and clear external temperature when disabling it."""
+        commands: list[tuple[str, Any]] = [("radiator_covered", covered)]
+        if not covered:
+            commands.extend(
+                [
+                    ("ext_measured_rs", -8000),
+                    ("sensor_avg_temp", -800),
+                ]
+            )
+        return await self.send_command(device_id, commands)
+
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
         return await self._api.set_mode(device_id, mode)

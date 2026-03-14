@@ -303,6 +303,58 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await ally.set_manual_temperature("device-1", 22.5))
 
+    async def test_set_external_temperature_enables_radiator_covered(self) -> None:
+        """External temperature writes should force covered-radiator mode."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {
+                        "commands": [
+                            {"code": "radiator_covered", "value": True},
+                            {"code": "ext_measured_rs", "value": 2500},
+                            {"code": "sensor_avg_temp", "value": 250},
+                        ]
+                    },
+                )
+                return httpx.Response(201, json={"result": True, "t": 14})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        self.assertTrue(await ally.set_external_temperature("device-1", 25.0))
+
+    async def test_set_radiator_covered_false_clears_external_temperature(self) -> None:
+        """Disabling covered-radiator mode should clear external sensor values."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {
+                        "commands": [
+                            {"code": "radiator_covered", "value": False},
+                            {"code": "ext_measured_rs", "value": -8000},
+                            {"code": "sensor_avg_temp", "value": -800},
+                        ]
+                    },
+                )
+                return httpx.Response(201, json={"result": True, "t": 15})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        self.assertTrue(await ally.set_radiator_covered("device-1", False))
+
     async def test_set_temperature_for_mode_sets_auto_mode_before_auto_setpoint(
         self,
     ) -> None:
