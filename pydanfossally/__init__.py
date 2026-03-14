@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -51,6 +52,7 @@ _MODE_TO_SETPOINT_CODE = {
     "holiday": "holiday_setting",
     "holiday_sat": "at_home_setting",
 }
+_REFRESH_DEVICE_CONCURRENCY = 5
 
 
 def _normalize_bool(value: Any) -> bool | None:
@@ -232,13 +234,18 @@ class DanfossAlly:
         return await self.get_device(device_id)
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
-        """Refresh all cached devices one-by-one via their dedicated endpoints."""
+        """Refresh cached devices via their dedicated endpoints."""
         device_ids = list(self.devices)
         if not device_ids:
             return await self.get_devices()
 
-        for device_id in device_ids:
-            await self.refresh_device(device_id)
+        semaphore = asyncio.Semaphore(_REFRESH_DEVICE_CONCURRENCY)
+
+        async def refresh_one(device_id: str) -> None:
+            async with semaphore:
+                await self.refresh_device(device_id)
+
+        await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
 
         return self.devices
 

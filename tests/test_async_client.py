@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from unittest.mock import patch
@@ -182,6 +183,30 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device["temp_set"], 23.0)
         self.assertEqual(device["temperature"], 20.5)
         self.assertEqual(device["last_response_time"], 13)
+
+    async def test_refresh_devices_limits_parallelism_to_five(self) -> None:
+        """Cached device refreshes should use bounded parallelism."""
+        ally = DanfossAlly(
+            api=await self._make_api(lambda request: httpx.Response(200))
+        )
+        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(8)}
+
+        active_calls = 0
+        max_active_calls = 0
+
+        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            await asyncio.sleep(0)
+            active_calls -= 1
+            return {"id": device_id}
+
+        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+
+        await ally.refresh_devices()
+
+        self.assertEqual(max_active_calls, 5)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
