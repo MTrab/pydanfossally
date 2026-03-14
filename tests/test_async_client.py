@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 import httpx
 
@@ -33,6 +34,28 @@ DEVICE_PAYLOAD = {
 
 class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     """Exercise the async-first client stack."""
+
+    async def test_default_http_client_is_created_lazily(self) -> None:
+        """The default HTTP client should not be created during __init__."""
+        api = DanfossAllyAPI()
+
+        self.assertIsNone(api._client)
+
+        with patch("pydanfossally.danfossallyapi.httpx.AsyncClient") as async_client:
+            mocked_client = unittest.mock.AsyncMock()
+            mocked_client.post.return_value = httpx.Response(
+                200,
+                json=TOKEN_RESPONSE,
+                request=httpx.Request("POST", f"{API_HOST}/oauth2/token"),
+            )
+            async_client.return_value = mocked_client
+
+            result = await api.get_token("key", "secret")
+
+        self.assertTrue(result)
+        async_client.assert_called_once()
+        mocked_client.post.assert_awaited_once()
+        await api.aclose()
 
     async def _make_api(self, handler) -> DanfossAllyAPI:
         client = httpx.AsyncClient(

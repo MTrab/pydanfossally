@@ -1,6 +1,7 @@
 """Async communication layer for the Danfoss Ally API."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
 import json
@@ -48,11 +49,8 @@ class DanfossAllyAPI:
         self._token = ""
         self._refresh_at = datetime.datetime.min
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
-            base_url=API_HOST,
-            timeout=timeout,
-            headers={"Accept": "application/json"},
-        )
+        self._timeout = timeout
+        self._client = client
 
     async def __aenter__(self) -> DanfossAllyAPI:
         """Allow async context manager usage."""
@@ -64,8 +62,19 @@ class DanfossAllyAPI:
 
     async def aclose(self) -> None:
         """Close the underlying async HTTP client when owned by this instance."""
-        if self._owns_client:
+        if self._owns_client and self._client is not None:
             await self._client.aclose()
+
+    async def _async_get_client(self) -> httpx.AsyncClient:
+        """Create the default async HTTP client on first use."""
+        if self._client is None:
+            self._client = await asyncio.to_thread(
+                httpx.AsyncClient,
+                base_url=API_HOST,
+                timeout=self._timeout,
+                headers={"Accept": "application/json"},
+            )
+        return self._client
 
     def _generate_base64_token(self, key: str, secret: str) -> str:
         """Generate a base64 encoded client credential token."""
@@ -101,9 +110,10 @@ class DanfossAllyAPI:
             await self._refresh_token()
 
         request_headers = headers or self._auth_headers()
+        client = await self._async_get_client()
 
         try:
-            response = await self._client.request(
+            response = await client.request(
                 method,
                 path,
                 json=payload,
@@ -161,9 +171,10 @@ class DanfossAllyAPI:
 
         base64_token = self._generate_base64_token(self._key, self._secret)
         post_data = "grant_type=client_credentials"
+        client = await self._async_get_client()
 
         try:
-            req = await self._client.post(
+            req = await client.post(
                 TOKEN_PATH,
                 content=post_data,
                 headers=self._basic_auth_headers(base64_token),
