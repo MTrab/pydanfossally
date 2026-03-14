@@ -1,4 +1,5 @@
 """Async-first module for handling Danfoss Ally API communication."""
+
 from __future__ import annotations
 
 import logging
@@ -38,6 +39,17 @@ _PASSTHROUGH_CODES = {
     "ctrl_alg",
     "adaptation_runstatus",
     "SetpointChangeSource",
+}
+
+_MODE_TO_SETPOINT_CODE = {
+    "at_home": "at_home_setting",
+    "home": "at_home_setting",
+    "leaving_home": "leaving_home_setting",
+    "away": "leaving_home_setting",
+    "pause": "pause_setting",
+    "manual": "manual_mode_fast",
+    "holiday": "holiday_setting",
+    "holiday_sat": "at_home_setting",
 }
 
 
@@ -83,7 +95,12 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
                 parsed["temperature"] = float(value) / 10
             elif code == "MeasuredValue" and parsed["floor_sensor"]:
                 parsed["floor_temperature"] = float(value) / 10
-            elif code in {"upper_temp", "lower_temp", "floor_temp_min", "floor_temp_max"}:
+            elif code in {
+                "upper_temp",
+                "lower_temp",
+                "floor_temp_min",
+                "floor_temp_max",
+            }:
                 parsed[code] = float(value) / 10
             elif code in {"local_temperature", "ext_measured_rs"}:
                 parsed[code] = float(value) / 100
@@ -117,6 +134,17 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
             )
 
     return parsed
+
+
+def _uses_temp_set_fallback(device: dict[str, Any]) -> bool:
+    """Return whether the device only exposes a single temp_set value."""
+    return "temp_set" in device and not {
+        "manual_mode_fast",
+        "at_home_setting",
+        "leaving_home_setting",
+        "pause_setting",
+        "holiday_setting",
+    }.issubset(device)
 
 
 class DanfossAlly:
@@ -199,6 +227,26 @@ class DanfossAlly:
         """Update temperature setpoint for one device."""
         return await self._api.set_temperature(device_id, int(temp * 10), code)
 
+    async def set_temperature_for_mode(
+        self,
+        device_id: str,
+        temp: float,
+        mode: str,
+    ) -> bool:
+        """Apply a temperature for a specific Danfoss mode."""
+        device = self.devices.get(device_id, {})
+        setpoint_code = self._get_setpoint_code_for_mode(device, mode)
+
+        mode_result = await self.set_mode(device_id, mode)
+        if mode_result is False:
+            return False
+
+        return await self.set_temperature(device_id, temp, code=setpoint_code)
+
+    async def set_manual_temperature(self, device_id: str, temp: float) -> bool:
+        """Apply a manual temperature override for one device."""
+        return await self.set_temperature_for_mode(device_id, temp, "manual")
+
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
         return await self._api.set_mode(device_id, mode)
@@ -217,6 +265,13 @@ class DanfossAlly:
         device_id = device["id"]
         self.devices[device_id] = parsed
         return parsed
+
+    def _get_setpoint_code_for_mode(self, device: dict[str, Any], mode: str) -> str:
+        """Resolve the Danfoss setpoint field for one mode."""
+        if _uses_temp_set_fallback(device):
+            return "temp_set"
+
+        return _MODE_TO_SETPOINT_CODE.get(mode, "manual_mode_fast")
 
     @property
     def authorized(self) -> bool:

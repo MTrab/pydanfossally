@@ -31,6 +31,23 @@ DEVICE_PAYLOAD = {
     ],
 }
 
+THERMOSTAT_WITH_MODE_SETPOINTS = {
+    **DEVICE_PAYLOAD,
+    "status": [
+        {"code": "manual_mode_fast", "value": 215},
+        {"code": "at_home_setting", "value": 200},
+        {"code": "leaving_home_setting", "value": 170},
+        {"code": "pause_setting", "value": 70},
+        {"code": "holiday_setting", "value": 140},
+        {"code": "temp_current", "value": 203},
+        {"code": "humidity_value", "value": 455},
+        {"code": "battery_percentage", "value": 97},
+        {"code": "window_state", "value": "open"},
+        {"code": "switch_state", "value": "true"},
+        {"code": "mode", "value": "manual"},
+    ],
+}
+
 
 class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     """Exercise the async-first client stack."""
@@ -150,6 +167,64 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.initialize("key", "secret")
 
         self.assertTrue(await ally.set_temperature("device-1", 22.0, code="temp_set"))
+
+    async def test_set_temperature_for_mode_sets_mode_before_mode_setpoint(
+        self,
+    ) -> None:
+        """Mode-aware temperature writes should set the matching mode first."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(
+                    200,
+                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
+                    return httpx.Response(201, json={"result": True, "t": 6})
+                if payload == {
+                    "commands": [{"code": "manual_mode_fast", "value": 230}]
+                }:
+                    return httpx.Response(201, json={"result": True, "t": 7})
+                raise AssertionError(f"Unexpected command payload: {payload}")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(await ally.set_temperature_for_mode("device-1", 23.0, "manual"))
+
+    async def test_set_manual_temperature_is_manual_mode_helper(self) -> None:
+        """Manual temperature helper should reuse manual mode semantics."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(
+                    200,
+                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
+                    return httpx.Response(201, json={"result": True, "t": 8})
+                if payload == {
+                    "commands": [{"code": "manual_mode_fast", "value": 225}]
+                }:
+                    return httpx.Response(201, json={"result": True, "t": 9})
+                raise AssertionError(f"Unexpected command payload: {payload}")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(await ally.set_manual_temperature("device-1", 22.5))
 
     async def test_bad_request_maps_to_domain_exception(self) -> None:
         """HTTP 400 should map to the dedicated request exception."""
