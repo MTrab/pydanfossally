@@ -1,6 +1,8 @@
 """Async-first module for handling Danfoss Ally API communication."""
+
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -40,6 +42,18 @@ _PASSTHROUGH_CODES = {
     "SetpointChangeSource",
 }
 
+_MODE_TO_SETPOINT_CODE = {
+    "at_home": "at_home_setting",
+    "home": "at_home_setting",
+    "leaving_home": "leaving_home_setting",
+    "away": "leaving_home_setting",
+    "pause": "pause_setting",
+    "manual": "manual_mode_fast",
+    "holiday": "holiday_setting",
+    "holiday_sat": "at_home_setting",
+}
+_REFRESH_DEVICE_CONCURRENCY = 10
+
 
 def _normalize_bool(value: Any) -> bool | None:
     """Convert API booleans that may arrive as bools or strings."""
@@ -50,7 +64,11 @@ def _normalize_bool(value: Any) -> bool | None:
     return None
 
 
-def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
+def parse_device_data(
+    device: dict[str, Any],
+    *,
+    last_response_time: int | None = None,
+) -> dict[str, Any]:
     """Convert raw API device payloads into the library's best-effort model."""
     parsed: dict[str, Any] = {
         "isThermostat": False,
@@ -59,6 +77,8 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
         "update": device.get("update_time"),
         "floor_sensor": False,
     }
+    if last_response_time is not None:
+        parsed["last_response_time"] = last_response_time
 
     if "model" in device:
         parsed["model"] = device["model"]
@@ -83,7 +103,12 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
                 parsed["temperature"] = float(value) / 10
             elif code == "MeasuredValue" and parsed["floor_sensor"]:
                 parsed["floor_temperature"] = float(value) / 10
-            elif code in {"upper_temp", "lower_temp", "floor_temp_min", "floor_temp_max"}:
+            elif code in {
+                "upper_temp",
+                "lower_temp",
+                "floor_temp_min",
+                "floor_temp_max",
+            }:
                 parsed[code] = float(value) / 10
             elif code in {"local_temperature", "ext_measured_rs"}:
                 parsed[code] = float(value) / 100
@@ -117,6 +142,17 @@ def parse_device_data(device: dict[str, Any]) -> dict[str, Any]:
             )
 
     return parsed
+
+
+def _uses_temp_set_fallback(device: dict[str, Any]) -> bool:
+    """Return whether the device only exposes a single temp_set value."""
+    return "temp_set" in device and not {
+        "manual_mode_fast",
+        "at_home_setting",
+        "leaving_home_setting",
+        "pause_setting",
+        "holiday_setting",
+    }.issubset(device)
 
 
 class DanfossAlly:
@@ -167,7 +203,7 @@ class DanfossAlly:
 
         self.devices = {}
         for device in response["result"]:
-            self._store_device(device)
+            self._store_device(device, last_response_time=response.get("t"))
 
         return self.devices
 
@@ -178,7 +214,10 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading device %s", device_id)
             return None
 
-        return self._store_device(response["result"])
+        return self._store_device(
+            response["result"],
+            last_response_time=response.get("t"),
+        )
 
     async def get_device_sub_devices(self, device_id: str) -> list[dict[str, Any]]:
         """Fetch the spec-defined sub-devices endpoint."""
@@ -190,6 +229,26 @@ class DanfossAlly:
         response = await self._api.get_device_status(device_id)
         return response.get("result", [])
 
+    async def refresh_device(self, device_id: str) -> dict[str, Any] | None:
+        """Refresh one cached device via its dedicated device endpoint."""
+        return await self.get_device(device_id)
+
+    async def refresh_devices(self) -> dict[str, dict[str, Any]]:
+        """Refresh cached devices via their dedicated endpoints."""
+        device_ids = list(self.devices)
+        if not device_ids:
+            return await self.get_devices()
+
+        semaphore = asyncio.Semaphore(_REFRESH_DEVICE_CONCURRENCY)
+
+        async def refresh_one(device_id: str) -> None:
+            async with semaphore:
+                await self.refresh_device(device_id)
+
+        await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
+
+        return self.devices
+
     async def set_temperature(
         self,
         device_id: str,
@@ -198,6 +257,55 @@ class DanfossAlly:
     ) -> bool:
         """Update temperature setpoint for one device."""
         return await self._api.set_temperature(device_id, int(temp * 10), code)
+
+    async def set_temperature_for_mode(
+        self,
+        device_id: str,
+        temp: float,
+        mode: str,
+    ) -> bool:
+        """Apply a temperature for a specific Danfoss mode."""
+        device = self.devices.get(device_id, {})
+        setpoint_code = self._get_setpoint_code_for_mode(device, mode)
+
+        mode_result = await self.set_mode(device_id, mode)
+        if mode_result is False:
+            return False
+
+        return await self.set_temperature(device_id, temp, code=setpoint_code)
+
+    async def set_manual_temperature(self, device_id: str, temp: float) -> bool:
+        """Apply a manual temperature override for one device."""
+        return await self.set_temperature_for_mode(device_id, temp, "manual")
+
+    async def set_external_temperature(
+        self,
+        device_id: str,
+        temperature: float | None,
+    ) -> bool:
+        """Set an external sensor temperature and enable covered-radiator mode."""
+        temp_10 = -800 if temperature is None else int(round(temperature * 10))
+        temp_100 = -8000 if temperature is None else int(round(temperature * 100))
+        return await self.send_command(
+            device_id,
+            [
+                ("radiator_covered", True),
+                ("ext_measured_rs", temp_100),
+                ("sensor_avg_temp", temp_10),
+            ],
+        )
+
+    async def set_radiator_covered(self, device_id: str, covered: bool) -> bool:
+        """Set covered-radiator mode and clear external temperature when disabling it."""
+        commands: list[tuple[str, Any]] = [("radiator_covered", covered)]
+        if not covered:
+            commands.extend(
+                [
+                    ("ext_measured_rs", -8000),
+                    ("sensor_avg_temp", -800),
+                ]
+            )
+        return await self.send_command(device_id, commands)
 
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
@@ -211,12 +319,24 @@ class DanfossAlly:
         """Send generic commands for one device."""
         return await self._api.send_command(device_id, listofcommands)
 
-    def _store_device(self, device: dict[str, Any]) -> dict[str, Any]:
+    def _store_device(
+        self,
+        device: dict[str, Any],
+        *,
+        last_response_time: int | None = None,
+    ) -> dict[str, Any]:
         """Parse and cache one device payload."""
-        parsed = parse_device_data(device)
+        parsed = parse_device_data(device, last_response_time=last_response_time)
         device_id = device["id"]
         self.devices[device_id] = parsed
         return parsed
+
+    def _get_setpoint_code_for_mode(self, device: dict[str, Any], mode: str) -> str:
+        """Resolve the Danfoss setpoint field for one mode."""
+        if _uses_temp_set_fallback(device):
+            return "temp_set"
+
+        return _MODE_TO_SETPOINT_CODE.get(mode, "manual_mode_fast")
 
     @property
     def authorized(self) -> bool:

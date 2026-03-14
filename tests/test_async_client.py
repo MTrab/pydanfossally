@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from unittest.mock import patch
@@ -22,6 +23,23 @@ DEVICE_PAYLOAD = {
     "device_type": "Danfoss Ally Thermostat",
     "status": [
         {"code": "temp_set", "value": 215},
+        {"code": "temp_current", "value": 203},
+        {"code": "humidity_value", "value": 455},
+        {"code": "battery_percentage", "value": 97},
+        {"code": "window_state", "value": "open"},
+        {"code": "switch_state", "value": "true"},
+        {"code": "mode", "value": "manual"},
+    ],
+}
+
+THERMOSTAT_WITH_MODE_SETPOINTS = {
+    **DEVICE_PAYLOAD,
+    "status": [
+        {"code": "manual_mode_fast", "value": 215},
+        {"code": "at_home_setting", "value": 200},
+        {"code": "leaving_home_setting", "value": 170},
+        {"code": "pause_setting", "value": 70},
+        {"code": "holiday_setting", "value": 140},
         {"code": "temp_current", "value": 203},
         {"code": "humidity_value", "value": 455},
         {"code": "battery_percentage", "value": 97},
@@ -86,6 +104,25 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(devices["device-1"]["name"], "Living room")
         self.assertEqual(devices["device-1"]["temperature"], 20.3)
         self.assertTrue(devices["device-1"]["window_open"])
+        self.assertEqual(devices["device-1"]["last_response_time"], 1)
+
+    async def test_get_device_maps_last_response_time(self) -> None:
+        """Single-device reads should keep the API response timestamp."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1":
+                return httpx.Response(200, json={"result": DEVICE_PAYLOAD, "t": 12})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        device = await ally.get_device("device-1")
+
+        assert device is not None
+        self.assertEqual(device["last_response_time"], 12)
 
     async def test_get_device_status_and_sub_devices(self) -> None:
         """Spec-defined read-only endpoints should be available."""
@@ -113,6 +150,63 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status[0]["code"], "temp_set")
         self.assertEqual(sub_devices[0]["id"], "child-1")
+
+    async def test_refresh_device_uses_single_device_endpoint(self) -> None:
+        """Per-device refresh should only use the single-device payload."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1":
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            **DEVICE_PAYLOAD,
+                            "status": [
+                                {"code": "temp_set", "value": 230},
+                                {"code": "temp_current", "value": 205},
+                                {"code": "mode", "value": "manual"},
+                            ],
+                        },
+                        "t": 13,
+                    },
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        device = await ally.refresh_device("device-1")
+
+        assert device is not None
+        self.assertEqual(device["temp_set"], 23.0)
+        self.assertEqual(device["temperature"], 20.5)
+        self.assertEqual(device["last_response_time"], 13)
+
+    async def test_refresh_devices_limits_parallelism_to_ten(self) -> None:
+        """Cached device refreshes should use bounded parallelism."""
+        ally = DanfossAlly(
+            api=await self._make_api(lambda request: httpx.Response(200))
+        )
+        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(8)}
+
+        active_calls = 0
+        max_active_calls = 0
+
+        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            await asyncio.sleep(0)
+            active_calls -= 1
+            return {"id": device_id}
+
+        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+
+        await ally.refresh_devices()
+
+        self.assertEqual(max_active_calls, 8)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
@@ -150,6 +244,146 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.initialize("key", "secret")
 
         self.assertTrue(await ally.set_temperature("device-1", 22.0, code="temp_set"))
+
+    async def test_set_temperature_for_mode_sets_mode_before_mode_setpoint(
+        self,
+    ) -> None:
+        """Mode-aware temperature writes should set the matching mode first."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(
+                    200,
+                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
+                    return httpx.Response(201, json={"result": True, "t": 6})
+                if payload == {
+                    "commands": [{"code": "manual_mode_fast", "value": 230}]
+                }:
+                    return httpx.Response(201, json={"result": True, "t": 7})
+                raise AssertionError(f"Unexpected command payload: {payload}")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(await ally.set_temperature_for_mode("device-1", 23.0, "manual"))
+
+    async def test_set_manual_temperature_is_manual_mode_helper(self) -> None:
+        """Manual temperature helper should reuse manual mode semantics."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(
+                    200,
+                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
+                    return httpx.Response(201, json={"result": True, "t": 8})
+                if payload == {
+                    "commands": [{"code": "manual_mode_fast", "value": 225}]
+                }:
+                    return httpx.Response(201, json={"result": True, "t": 9})
+                raise AssertionError(f"Unexpected command payload: {payload}")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(await ally.set_manual_temperature("device-1", 22.5))
+
+    async def test_set_external_temperature_enables_radiator_covered(self) -> None:
+        """External temperature writes should force covered-radiator mode."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {
+                        "commands": [
+                            {"code": "radiator_covered", "value": True},
+                            {"code": "ext_measured_rs", "value": 2500},
+                            {"code": "sensor_avg_temp", "value": 250},
+                        ]
+                    },
+                )
+                return httpx.Response(201, json={"result": True, "t": 14})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        self.assertTrue(await ally.set_external_temperature("device-1", 25.0))
+
+    async def test_set_radiator_covered_false_clears_external_temperature(self) -> None:
+        """Disabling covered-radiator mode should clear external sensor values."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {
+                        "commands": [
+                            {"code": "radiator_covered", "value": False},
+                            {"code": "ext_measured_rs", "value": -8000},
+                            {"code": "sensor_avg_temp", "value": -800},
+                        ]
+                    },
+                )
+                return httpx.Response(201, json={"result": True, "t": 15})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        self.assertTrue(await ally.set_radiator_covered("device-1", False))
+
+    async def test_set_temperature_for_mode_sets_auto_mode_before_auto_setpoint(
+        self,
+    ) -> None:
+        """Mode-aware temperature writes should switch back to schedule mode."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(
+                    200,
+                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                if payload["commands"][0] == {"code": "mode", "value": "at_home"}:
+                    return httpx.Response(201, json={"result": True, "t": 10})
+                if payload == {"commands": [{"code": "at_home_setting", "value": 210}]}:
+                    return httpx.Response(201, json={"result": True, "t": 11})
+                raise AssertionError(f"Unexpected command payload: {payload}")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(
+            await ally.set_temperature_for_mode("device-1", 21.0, "at_home")
+        )
 
     async def test_bad_request_maps_to_domain_exception(self) -> None:
         """HTTP 400 should map to the dedicated request exception."""
@@ -200,3 +434,9 @@ class ParseDeviceDataTests(unittest.TestCase):
         self.assertTrue(parsed["switch_state"])
         self.assertEqual(parsed["mode"], "manual")
         self.assertTrue(parsed["isThermostat"])
+
+    def test_parse_device_data_accepts_last_response_time(self) -> None:
+        """The parser should expose the API response timestamp when provided."""
+        parsed = parse_device_data(DEVICE_PAYLOAD, last_response_time=1773499838298)
+
+        self.assertEqual(parsed["last_response_time"], 1773499838298)
