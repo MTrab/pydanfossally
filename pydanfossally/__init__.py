@@ -52,7 +52,7 @@ _MODE_TO_SETPOINT_CODE = {
     "holiday": "holiday_setting",
     "holiday_sat": "at_home_setting",
 }
-_REFRESH_DEVICE_CONCURRENCY = 5
+_REFRESH_DEVICE_CONCURRENCY = 10
 
 
 def _normalize_bool(value: Any) -> bool | None:

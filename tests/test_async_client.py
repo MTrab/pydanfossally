@@ -184,7 +184,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device["temperature"], 20.5)
         self.assertEqual(device["last_response_time"], 13)
 
-    async def test_refresh_devices_limits_parallelism_to_five(self) -> None:
+    async def test_refresh_devices_limits_parallelism_to_ten(self) -> None:
         """Cached device refreshes should use bounded parallelism."""
         ally = DanfossAlly(
             api=await self._make_api(lambda request: httpx.Response(200))
@@ -206,7 +206,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         await ally.refresh_devices()
 
-        self.assertEqual(max_active_calls, 5)
+        self.assertEqual(max_active_calls, 8)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
