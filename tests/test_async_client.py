@@ -184,12 +184,14 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device["temperature"], 20.5)
         self.assertEqual(device["last_response_time"], 13)
 
-    async def test_refresh_devices_limits_parallelism_to_ten(self) -> None:
+    async def test_refresh_devices_limits_parallelism_to_three(self) -> None:
         """Cached device refreshes should use bounded parallelism."""
         ally = DanfossAlly(
-            api=await self._make_api(lambda request: httpx.Response(200))
+            api=await self._make_api(lambda request: httpx.Response(200)),
+            refresh_device_concurrency=3,
+            refresh_device_min_interval=0,
         )
-        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(8)}
+        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(6)}
 
         active_calls = 0
         max_active_calls = 0
@@ -206,7 +208,37 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         await ally.refresh_devices()
 
-        self.assertEqual(max_active_calls, 8)
+        self.assertEqual(max_active_calls, 3)
+
+    async def test_refresh_devices_rate_limits_device_reads(self) -> None:
+        """Cached device refreshes should be paced to avoid request bursts."""
+        ally = DanfossAlly(
+            api=await self._make_api(lambda request: httpx.Response(200)),
+            refresh_device_min_interval=0.02,
+        )
+        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(3)}
+
+        started_at: list[float] = []
+
+        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+            started_at.append(asyncio.get_running_loop().time())
+            return {"id": device_id}
+
+        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+
+        await ally.refresh_devices()
+
+        self.assertEqual(len(started_at), 3)
+        self.assertGreaterEqual(started_at[1] - started_at[0], 0.015)
+        self.assertGreaterEqual(started_at[2] - started_at[1], 0.015)
+
+    def test_constructor_rejects_invalid_refresh_tuning(self) -> None:
+        """Refresh tuning should reject invalid values early."""
+        with self.assertRaises(ValueError):
+            DanfossAlly(refresh_device_concurrency=0)
+
+        with self.assertRaises(ValueError):
+            DanfossAlly(refresh_device_min_interval=-0.1)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""

@@ -52,7 +52,8 @@ _MODE_TO_SETPOINT_CODE = {
     "holiday": "holiday_setting",
     "holiday_sat": "at_home_setting",
 }
-_REFRESH_DEVICE_CONCURRENCY = 10
+_REFRESH_DEVICE_CONCURRENCY = 3
+_REFRESH_DEVICE_MIN_INTERVAL = 0.35
 
 
 def _normalize_bool(value: Any) -> bool | None:
@@ -162,12 +163,23 @@ class DanfossAlly:
         self,
         api: DanfossAllyAPI | None = None,
         timeout: float = DEFAULT_TIMEOUT,
+        refresh_device_concurrency: int = _REFRESH_DEVICE_CONCURRENCY,
+        refresh_device_min_interval: float = _REFRESH_DEVICE_MIN_INTERVAL,
     ) -> None:
         """Initialize the connector."""
+        if refresh_device_concurrency < 1:
+            raise ValueError("refresh_device_concurrency must be at least 1")
+        if refresh_device_min_interval < 0:
+            raise ValueError("refresh_device_min_interval must be non-negative")
+
         self._authorized = False
         self._token: str | None = None
         self.devices: dict[str, dict[str, Any]] = {}
         self._api = api or DanfossAllyAPI(timeout=timeout)
+        self._refresh_device_concurrency = refresh_device_concurrency
+        self._refresh_device_min_interval = refresh_device_min_interval
+        self._refresh_rate_lock = asyncio.Lock()
+        self._next_refresh_slot = 0.0
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -233,16 +245,30 @@ class DanfossAlly:
         """Refresh one cached device via its dedicated device endpoint."""
         return await self.get_device(device_id)
 
+    async def _wait_for_refresh_slot(self) -> None:
+        """Space refreshes out so the API does not receive a burst of device reads."""
+        loop = asyncio.get_running_loop()
+
+        async with self._refresh_rate_lock:
+            now = loop.time()
+            scheduled_at = max(now, self._next_refresh_slot)
+            self._next_refresh_slot = scheduled_at + self._refresh_device_min_interval
+
+        delay = scheduled_at - loop.time()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
         """Refresh cached devices via their dedicated endpoints."""
         device_ids = list(self.devices)
         if not device_ids:
             return await self.get_devices()
 
-        semaphore = asyncio.Semaphore(_REFRESH_DEVICE_CONCURRENCY)
+        semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
 
         async def refresh_one(device_id: str) -> None:
             async with semaphore:
+                await self._wait_for_refresh_slot()
                 await self.refresh_device(device_id)
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
