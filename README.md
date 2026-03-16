@@ -20,7 +20,11 @@ client alive and reuse it across many calls.
 ```python
 from pydanfossally import DanfossAlly
 
-ally = DanfossAlly(timeout=30)
+ally = DanfossAlly(
+    timeout=30,
+    refresh_device_concurrency=3,
+    refresh_device_min_interval=0.35,
+)
 
 authorized = await ally.initialize(key, secret)
 if not authorized:
@@ -45,7 +49,11 @@ from pydanfossally import DanfossAlly
 
 
 async def main() -> None:
-    async with DanfossAlly(timeout=30) as ally:
+    async with DanfossAlly(
+        timeout=30,
+        refresh_device_concurrency=3,
+        refresh_device_min_interval=0.35,
+    ) as ally:
         authorized = await ally.initialize(os.environ["KEY"], os.environ["SECRET"])
         if not authorized:
             raise RuntimeError("Authorization failed")
@@ -86,6 +94,18 @@ device-specific status or command codes. That means:
   accepts both `{"result": true, "t": ...}` and `{"t": ...}`.
 - Live verification should be performed against read-only endpoints before enabling write flows
   in production integrations.
+
+## Refresh behavior
+
+The library keeps `refresh_device()` on the near-realtime `GET /ally/devices/{device_id}`
+endpoint. Bulk `refresh_devices()` calls intentionally pace those per-device reads and use a
+small concurrency limit to reduce burst load against the upstream API.
+
+Both knobs are configurable through `DanfossAlly(...)`:
+
+- `refresh_device_concurrency` controls how many per-device refreshes may run at once
+- `refresh_device_min_interval` controls the minimum delay in seconds between starting two
+  per-device refreshes
 
 ## Local verification
 
