@@ -176,6 +176,7 @@ class DanfossAlly:
         refresh_device_concurrency: int = _REFRESH_DEVICE_CONCURRENCY,
         refresh_device_min_interval: float = _REFRESH_DEVICE_MIN_INTERVAL,
         refresh_device_timeout: float = _REFRESH_DEVICE_TIMEOUT,
+        user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the connector."""
         if refresh_device_concurrency < 1:
@@ -188,7 +189,10 @@ class DanfossAlly:
         self._authorized = False
         self._token: str | None = None
         self.devices: dict[str, dict[str, Any]] = {}
-        self._api = api or DanfossAllyAPI(timeout=timeout)
+        self._api = api or DanfossAllyAPI(
+            timeout=timeout,
+            user_agent_prefix=user_agent_prefix,
+        )
         self._refresh_device_concurrency = refresh_device_concurrency
         self._refresh_device_min_interval = refresh_device_min_interval
         self._refresh_device_timeout = refresh_device_timeout
@@ -462,7 +466,9 @@ class DanfossAlly:
                 expected_fields[code] = float(value) / 100
             elif code in _BOOLEAN_CODES:
                 normalized = _normalize_bool(value)
-                expected_fields[code.lower()] = value if normalized is None else normalized
+                expected_fields[code.lower()] = (
+                    value if normalized is None else normalized
+                )
             elif code in _PASSTHROUGH_CODES:
                 expected_fields[code.lower()] = value
         return expected_fields
@@ -473,7 +479,9 @@ class DanfossAlly:
         expected_fields: dict[str, Any],
     ) -> bool:
         """Return whether the parsed bulk device state reflects the expected fields."""
-        return all(device.get(field) == value for field, value in expected_fields.items())
+        return all(
+            device.get(field) == value for field, value in expected_fields.items()
+        )
 
     @property
     def authorized(self) -> bool:

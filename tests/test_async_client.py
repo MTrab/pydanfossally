@@ -80,6 +80,62 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         mocked_client.post.assert_awaited_once()
         await api.aclose()
 
+    def test_default_user_agent_starts_with_safe_fallback(self) -> None:
+        """The constructor should not resolve package metadata synchronously."""
+        api = DanfossAllyAPI()
+
+        self.assertEqual(api._user_agent, "pydanfossally/unknown")
+
+    async def test_user_agent_is_resolved_during_async_initialization(self) -> None:
+        """The user agent version should be resolved lazily in async code."""
+        with patch(
+            "pydanfossally.danfossallyapi.metadata.version",
+            return_value="1.2.3",
+        ):
+            api = DanfossAllyAPI(
+                user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
+            )
+            await api._ensure_user_agent()
+
+            self.assertEqual(
+                api._user_agent,
+                "HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/1.2.3",
+            )
+
+    async def test_requests_send_prefixed_user_agent_header(self) -> None:
+        """Outgoing request headers should include the composed user agent."""
+        with patch(
+            "pydanfossally.danfossallyapi.metadata.version",
+            return_value="1.2.3",
+        ):
+            api = DanfossAllyAPI(
+                user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
+            )
+            await api._ensure_user_agent()
+
+        self.assertEqual(
+            api._auth_headers()["User-Agent"],
+            "HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/1.2.3",
+        )
+        self.assertEqual(
+            api._basic_auth_headers("token")["User-Agent"],
+            "HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/1.2.3",
+        )
+
+    async def test_wrapper_passes_user_agent_prefix_to_default_api(self) -> None:
+        """The high-level wrapper should pass user agent prefixes to its API client."""
+        with patch(
+            "pydanfossally.danfossallyapi.metadata.version",
+            return_value="1.2.3",
+        ):
+            ally = DanfossAlly(user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0")
+            await ally._api._ensure_user_agent()
+
+        self.assertEqual(
+            ally._api._user_agent,
+            "HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/1.2.3",
+        )
+
     async def _make_api(self, handler) -> DanfossAllyAPI:
         client = httpx.AsyncClient(
             base_url=API_HOST,
