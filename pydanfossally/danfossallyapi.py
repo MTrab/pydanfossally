@@ -86,6 +86,11 @@ class DanfossAllyAPI:
     async def _async_get_client(self) -> httpx.AsyncClient:
         """Create the default async HTTP client on first use."""
         if self._client is None:
+            _LOGGER.debug(
+                "Creating async HTTP client for %s with timeout=%s",
+                API_HOST,
+                self._timeout,
+            )
             self._client = await asyncio.to_thread(
                 httpx.AsyncClient,
                 base_url=API_HOST,
@@ -102,6 +107,7 @@ class DanfossAllyAPI:
         if self._user_agent_suffix != _DEFAULT_USER_AGENT_SUFFIX:
             return
         self._user_agent_suffix = await asyncio.to_thread(_resolve_user_agent_suffix)
+        _LOGGER.debug("Resolved User-Agent suffix to %s", self._user_agent_suffix)
 
     @property
     def _user_agent(self) -> str:
@@ -148,6 +154,13 @@ class DanfossAllyAPI:
 
         request_headers = headers or self._auth_headers()
         client = await self._async_get_client()
+        _LOGGER.debug(
+            "Sending %s %s (payload=%s, auth_refresh=%s)",
+            method,
+            path,
+            "yes" if payload is not None else "no",
+            not skip_auth_refresh,
+        )
 
         try:
             response = await client.request(
@@ -157,45 +170,79 @@ class DanfossAllyAPI:
                 headers=request_headers,
             )
             response.raise_for_status()
+            _LOGGER.debug(
+                "Received %s response for %s %s",
+                response.status_code,
+                method,
+                path,
+            )
         except httpx.HTTPStatusError as err:
+            _LOGGER.debug(
+                "HTTP error for %s %s: status=%s",
+                method,
+                path,
+                err.response.status_code,
+            )
             raise self._map_http_error(err) from err
         except httpx.TimeoutException as err:
+            _LOGGER.debug("Timeout while calling %s %s", method, path)
             raise TimeoutError from err
         except httpx.ConnectError as err:
+            _LOGGER.debug("Connection error while calling %s %s", method, path)
             raise ConnectionError from err
         except httpx.HTTPError as err:
+            _LOGGER.debug("Unexpected HTTP error while calling %s %s: %s", method, path, err)
             raise UnexpectedError from err
 
         if not response.content:
+            _LOGGER.debug("Empty response body for %s %s", method, path)
             return {}
 
         try:
-            return response.json()
+            data = response.json()
+            _LOGGER.debug(
+                "Decoded JSON response for %s %s with keys=%s",
+                method,
+                path,
+                sorted(data.keys()),
+            )
+            return data
         except json.JSONDecodeError as err:
+            _LOGGER.debug("Failed to decode JSON response for %s %s", method, path)
             raise UnexpectedError from err
 
     def _map_http_error(self, err: httpx.HTTPStatusError) -> Exception:
         """Translate HTTP failures into domain-specific exceptions."""
         status_code = err.response.status_code
         if status_code == 400:
-            return BadRequestError()
-        if status_code == 401:
-            return UnauthorizedError()
-        if status_code == 403:
-            return ForbiddenError()
-        if status_code == 404:
-            return NotFoundError()
-        if status_code == 429:
-            return RateLimitError()
-        if 500 <= status_code <= 599:
-            return InternalServerError()
-        return APIError(f"Unexpected HTTP status code: {status_code}")
+            mapped = BadRequestError()
+        elif status_code == 401:
+            mapped = UnauthorizedError()
+        elif status_code == 403:
+            mapped = ForbiddenError()
+        elif status_code == 404:
+            mapped = NotFoundError()
+        elif status_code == 429:
+            mapped = RateLimitError()
+        elif 500 <= status_code <= 599:
+            mapped = InternalServerError()
+        else:
+            mapped = APIError(f"Unexpected HTTP status code: {status_code}")
+        _LOGGER.debug(
+            "Mapped HTTP status %s on %s to %s",
+            status_code,
+            err.request.url.path,
+            mapped.__class__.__name__,
+        )
+        return mapped
 
     async def _refresh_token(self) -> bool:
         """Refresh OAuth2 token when it has expired."""
         if self._refresh_at > datetime.datetime.now():
+            _LOGGER.debug("Skipping token refresh; cached token is still valid")
             return False
 
+        _LOGGER.debug("Refreshing OAuth token")
         return await self.get_token()
 
     async def get_token(
@@ -209,6 +256,7 @@ class DanfossAllyAPI:
             self._secret = secret
 
         if not self._key or not self._secret:
+            _LOGGER.debug("Token request skipped because credentials are missing")
             return False
 
         base64_token = self._generate_base64_token(self._key, self._secret)
@@ -223,6 +271,7 @@ class DanfossAllyAPI:
             )
             req.raise_for_status()
             response = req.json()
+            _LOGGER.debug("Token request succeeded with status %s", req.status_code)
         except httpx.HTTPStatusError as err:
             mapped_error = self._map_http_error(err)
             if isinstance(mapped_error, (BadRequestError, UnauthorizedError)):
@@ -249,6 +298,7 @@ class DanfossAllyAPI:
             seconds=expires_in - 30
         )
         self._token = response["access_token"]
+        _LOGGER.debug("Stored OAuth token with expires_in=%s seconds", expires_in)
         return True
 
     async def get_devices(self) -> dict[str, Any]:
@@ -284,7 +334,12 @@ class DanfossAllyAPI:
                 {"code": code, "value": value} for code, value in listofcommands
             ]
         }
-        _LOGGER.debug("Sending command to device %s: %s", device_id, request_body)
+        _LOGGER.debug(
+            "Sending %s command(s) to device %s with codes=%s",
+            len(listofcommands),
+            device_id,
+            [code for code, _ in listofcommands],
+        )
         response = await self._request(
             "POST",
             f"{ALLY_PREFIX}/devices/{device_id}/commands",
