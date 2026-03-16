@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 from typing import Any
 
@@ -52,8 +53,17 @@ _MODE_TO_SETPOINT_CODE = {
     "holiday": "holiday_setting",
     "holiday_sat": "at_home_setting",
 }
-_REFRESH_DEVICE_CONCURRENCY = 3
+_REFRESH_DEVICE_CONCURRENCY = 2
 _REFRESH_DEVICE_MIN_INTERVAL = 0.35
+_REFRESH_DEVICE_TIMEOUT = 600.0
+
+
+@dataclass
+class _PendingDeviceSync:
+    """Track one device that should keep using realtime refresh temporarily."""
+
+    expected_fields: dict[str, Any]
+    deadline: float
 
 
 def _normalize_bool(value: Any) -> bool | None:
@@ -165,12 +175,15 @@ class DanfossAlly:
         timeout: float = DEFAULT_TIMEOUT,
         refresh_device_concurrency: int = _REFRESH_DEVICE_CONCURRENCY,
         refresh_device_min_interval: float = _REFRESH_DEVICE_MIN_INTERVAL,
+        refresh_device_timeout: float = _REFRESH_DEVICE_TIMEOUT,
     ) -> None:
         """Initialize the connector."""
         if refresh_device_concurrency < 1:
             raise ValueError("refresh_device_concurrency must be at least 1")
         if refresh_device_min_interval < 0:
             raise ValueError("refresh_device_min_interval must be non-negative")
+        if refresh_device_timeout < 0:
+            raise ValueError("refresh_device_timeout must be non-negative")
 
         self._authorized = False
         self._token: str | None = None
@@ -178,8 +191,11 @@ class DanfossAlly:
         self._api = api or DanfossAllyAPI(timeout=timeout)
         self._refresh_device_concurrency = refresh_device_concurrency
         self._refresh_device_min_interval = refresh_device_min_interval
+        self._refresh_device_timeout = refresh_device_timeout
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
+        self._pending_device_syncs: dict[str, _PendingDeviceSync] = {}
+        self._last_bulk_response_time: int | None = None
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -213,9 +229,19 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading devices")
             return self.devices
 
+        previous_bulk_response_time = self._last_bulk_response_time
+        current_bulk_response_time = response.get("t")
+
         self.devices = {}
         for device in response["result"]:
             self._store_device(device, last_response_time=response.get("t"))
+
+        self._last_bulk_response_time = current_bulk_response_time
+        if (
+            current_bulk_response_time is None
+            or current_bulk_response_time != previous_bulk_response_time
+        ):
+            self._clear_pending_device_syncs_from_bulk_snapshot()
 
         return self.devices
 
@@ -259,10 +285,12 @@ class DanfossAlly:
             await asyncio.sleep(delay)
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
-        """Refresh cached devices via their dedicated endpoints."""
-        device_ids = list(self.devices)
+        """Refresh the bulk snapshot, then keep pending devices on the realtime path."""
+        await self.get_devices()
+
+        device_ids = self._active_pending_device_ids()
         if not device_ids:
-            return await self.get_devices()
+            return self.devices
 
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
 
@@ -282,7 +310,7 @@ class DanfossAlly:
         code: str = "manual_mode_fast",
     ) -> bool:
         """Update temperature setpoint for one device."""
-        return await self._api.set_temperature(device_id, int(temp * 10), code)
+        return await self.send_command(device_id, [(code, int(temp * 10))])
 
     async def set_temperature_for_mode(
         self,
@@ -335,7 +363,10 @@ class DanfossAlly:
 
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
-        return await self._api.set_mode(device_id, mode)
+        result = await self._api.set_mode(device_id, mode)
+        if result:
+            self._mark_pending_device_sync(device_id, {"mode": mode})
+        return result
 
     async def send_command(
         self,
@@ -343,7 +374,13 @@ class DanfossAlly:
         listofcommands: list[tuple[str, Any]],
     ) -> bool:
         """Send generic commands for one device."""
-        return await self._api.send_command(device_id, listofcommands)
+        result = await self._api.send_command(device_id, listofcommands)
+        if result:
+            self._mark_pending_device_sync(
+                device_id,
+                self._expected_fields_from_commands(listofcommands),
+            )
+        return result
 
     def _store_device(
         self,
@@ -363,6 +400,80 @@ class DanfossAlly:
             return "temp_set"
 
         return _MODE_TO_SETPOINT_CODE.get(mode, "manual_mode_fast")
+
+    def _active_pending_device_ids(self) -> list[str]:
+        """Return pending devices that have not yet timed out."""
+        now = asyncio.get_running_loop().time()
+        expired_device_ids = [
+            device_id
+            for device_id, pending_sync in self._pending_device_syncs.items()
+            if pending_sync.deadline <= now
+        ]
+        for device_id in expired_device_ids:
+            self._pending_device_syncs.pop(device_id, None)
+        return list(self._pending_device_syncs)
+
+    def _clear_pending_device_syncs_from_bulk_snapshot(self) -> None:
+        """Stop realtime refresh once the bulk endpoint has caught up."""
+        satisfied_device_ids = [
+            device_id
+            for device_id, pending_sync in self._pending_device_syncs.items()
+            if self._device_matches_expected_fields(
+                self.devices.get(device_id, {}),
+                pending_sync.expected_fields,
+            )
+        ]
+        for device_id in satisfied_device_ids:
+            self._pending_device_syncs.pop(device_id, None)
+
+    def _mark_pending_device_sync(
+        self,
+        device_id: str,
+        expected_fields: dict[str, Any],
+    ) -> None:
+        """Track one device until the bulk endpoint reflects the written fields."""
+        if not expected_fields:
+            return
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._refresh_device_timeout
+        current = self._pending_device_syncs.get(device_id)
+        merged_fields = dict(current.expected_fields) if current else {}
+        merged_fields.update(expected_fields)
+        self._pending_device_syncs[device_id] = _PendingDeviceSync(
+            expected_fields=merged_fields,
+            deadline=deadline,
+        )
+
+    def _expected_fields_from_commands(
+        self,
+        commands: list[tuple[str, Any]],
+    ) -> dict[str, Any]:
+        """Map write commands onto parsed device fields used for bulk-sync matching."""
+        expected_fields: dict[str, Any] = {}
+        for code, value in commands:
+            if code in _SETPOINT_CODES:
+                expected_fields[code] = float(value) / 10
+            elif code == "mode":
+                expected_fields["mode"] = value
+            elif code == "sensor_avg_temp":
+                expected_fields["external_sensor_temperature"] = float(value) / 10
+            elif code in {"local_temperature", "ext_measured_rs"}:
+                expected_fields[code] = float(value) / 100
+            elif code in _BOOLEAN_CODES:
+                normalized = _normalize_bool(value)
+                expected_fields[code.lower()] = value if normalized is None else normalized
+            elif code in _PASSTHROUGH_CODES:
+                expected_fields[code.lower()] = value
+        return expected_fields
+
+    def _device_matches_expected_fields(
+        self,
+        device: dict[str, Any],
+        expected_fields: dict[str, Any],
+    ) -> bool:
+        """Return whether the parsed bulk device state reflects the expected fields."""
+        return all(device.get(field) == value for field, value in expected_fields.items())
 
     @property
     def authorized(self) -> bool:

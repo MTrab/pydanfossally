@@ -12,8 +12,9 @@ from pydanfossally import DanfossAlly
 async def main() -> None:
     """Run a simple read-only session against the Danfoss Ally API."""
     async with DanfossAlly(
-        refresh_device_concurrency=3,
+        refresh_device_concurrency=2,
         refresh_device_min_interval=0.35,
+        refresh_device_timeout=600,
     ) as ally:
         authorized = await ally.initialize(environ["KEY"], environ["SECRET"])
         if not authorized:

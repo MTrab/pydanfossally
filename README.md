@@ -22,8 +22,9 @@ from pydanfossally import DanfossAlly
 
 ally = DanfossAlly(
     timeout=30,
-    refresh_device_concurrency=3,
+    refresh_device_concurrency=2,
     refresh_device_min_interval=0.35,
+    refresh_device_timeout=600,
 )
 
 authorized = await ally.initialize(key, secret)
@@ -51,8 +52,9 @@ from pydanfossally import DanfossAlly
 async def main() -> None:
     async with DanfossAlly(
         timeout=30,
-        refresh_device_concurrency=3,
+        refresh_device_concurrency=2,
         refresh_device_min_interval=0.35,
+        refresh_device_timeout=600,
     ) as ally:
         authorized = await ally.initialize(os.environ["KEY"], os.environ["SECRET"])
         if not authorized:
@@ -97,15 +99,18 @@ device-specific status or command codes. That means:
 
 ## Refresh behavior
 
-The library keeps `refresh_device()` on the near-realtime `GET /ally/devices/{device_id}`
-endpoint. Bulk `refresh_devices()` calls intentionally pace those per-device reads and use a
-small concurrency limit to reduce burst load against the upstream API.
+The library uses `GET /ally/devices` as its baseline refresh path. After a successful local
+write, the affected device temporarily stays on the near-realtime
+`GET /ally/devices/{device_id}` endpoint until the bulk endpoint reflects the written fields or a
+timeout is reached.
 
 Both knobs are configurable through `DanfossAlly(...)`:
 
 - `refresh_device_concurrency` controls how many per-device refreshes may run at once
 - `refresh_device_min_interval` controls the minimum delay in seconds between starting two
   per-device refreshes
+- `refresh_device_timeout` controls how long a written device may stay on per-device refresh
+  before the client falls back to the bulk endpoint only
 
 ## Local verification
 
