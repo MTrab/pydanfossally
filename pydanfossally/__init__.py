@@ -215,6 +215,7 @@ class DanfossAlly:
 
     async def initialize(self, key: str, secret: str) -> bool:
         """Authorize and initialize the connection."""
+        _LOGGER.debug("Initializing DanfossAlly client")
         token = await self._api.get_token(key, secret)
 
         if token is False:
@@ -224,10 +225,12 @@ class DanfossAlly:
 
         self._token = self._api.token
         self._authorized = True
+        _LOGGER.debug("DanfossAlly client initialized successfully")
         return True
 
     async def get_devices(self) -> dict[str, dict[str, Any]]:
         """Fetch and parse all devices."""
+        _LOGGER.debug("Fetching bulk device snapshot")
         response = await self._api.get_devices()
         if not response or "result" not in response:
             _LOGGER.error("Something went wrong loading devices")
@@ -240,6 +243,11 @@ class DanfossAlly:
         for device in response["result"]:
             self._store_device(device, last_response_time=response.get("t"))
 
+        _LOGGER.debug(
+            "Loaded %s devices from bulk snapshot with t=%s",
+            len(self.devices),
+            current_bulk_response_time,
+        )
         self._last_bulk_response_time = current_bulk_response_time
         if (
             current_bulk_response_time is None
@@ -251,6 +259,7 @@ class DanfossAlly:
 
     async def get_device(self, device_id: str) -> dict[str, Any] | None:
         """Fetch one device and parse it into the cached device map."""
+        _LOGGER.debug("Fetching realtime state for device %s", device_id)
         response = await self._api.get_device(device_id)
         if not response or "result" not in response:
             _LOGGER.error("Something went wrong loading device %s", device_id)
@@ -290,11 +299,21 @@ class DanfossAlly:
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
         """Refresh the bulk snapshot, then keep pending devices on the realtime path."""
+        _LOGGER.debug(
+            "Starting refresh cycle (pending_devices=%s)",
+            len(self._pending_device_syncs),
+        )
         await self.get_devices()
 
         device_ids = self._active_pending_device_ids()
         if not device_ids:
+            _LOGGER.debug("Refresh cycle completed using bulk snapshot only")
             return self.devices
+
+        _LOGGER.debug(
+            "Refreshing %s pending device(s) via realtime endpoint",
+            len(device_ids),
+        )
 
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
 
@@ -305,6 +324,7 @@ class DanfossAlly:
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
 
+        _LOGGER.debug("Refresh cycle completed with pending realtime refreshes")
         return self.devices
 
     async def set_temperature(
@@ -367,6 +387,7 @@ class DanfossAlly:
 
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
+        _LOGGER.debug("Setting mode for device %s to %s", device_id, mode)
         result = await self._api.set_mode(device_id, mode)
         if result:
             self._mark_pending_device_sync(device_id, {"mode": mode})
@@ -378,6 +399,11 @@ class DanfossAlly:
         listofcommands: list[tuple[str, Any]],
     ) -> bool:
         """Send generic commands for one device."""
+        _LOGGER.debug(
+            "Sending generic command(s) for device %s with codes=%s",
+            device_id,
+            [code for code, _ in listofcommands],
+        )
         result = await self._api.send_command(device_id, listofcommands)
         if result:
             self._mark_pending_device_sync(
@@ -396,6 +422,7 @@ class DanfossAlly:
         parsed = parse_device_data(device, last_response_time=last_response_time)
         device_id = device["id"]
         self.devices[device_id] = parsed
+        _LOGGER.debug("Stored parsed state for device %s", device_id)
         return parsed
 
     def _get_setpoint_code_for_mode(self, device: dict[str, Any], mode: str) -> str:
@@ -415,6 +442,10 @@ class DanfossAlly:
         ]
         for device_id in expired_device_ids:
             self._pending_device_syncs.pop(device_id, None)
+            _LOGGER.debug(
+                "Stopped realtime refresh for device %s because pending sync timed out",
+                device_id,
+            )
         return list(self._pending_device_syncs)
 
     def _clear_pending_device_syncs_from_bulk_snapshot(self) -> None:
@@ -429,6 +460,10 @@ class DanfossAlly:
         ]
         for device_id in satisfied_device_ids:
             self._pending_device_syncs.pop(device_id, None)
+            _LOGGER.debug(
+                "Stopped realtime refresh for device %s because bulk snapshot caught up",
+                device_id,
+            )
 
     def _mark_pending_device_sync(
         self,
@@ -447,6 +482,12 @@ class DanfossAlly:
         self._pending_device_syncs[device_id] = _PendingDeviceSync(
             expected_fields=merged_fields,
             deadline=deadline,
+        )
+        _LOGGER.debug(
+            "Marked device %s for pending realtime refresh with fields=%s until deadline=%s",
+            device_id,
+            sorted(merged_fields),
+            deadline,
         )
 
     def _expected_fields_from_commands(
