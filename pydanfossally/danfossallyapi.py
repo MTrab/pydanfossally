@@ -13,6 +13,7 @@ import httpx
 from .exceptions import (
     APIError,
     BadRequestError,
+    ForbiddenError,
     InternalServerError,
     NotFoundError,
     RateLimitError,
@@ -144,11 +145,13 @@ class DanfossAllyAPI:
             return BadRequestError()
         if status_code == 401:
             return UnauthorizedError()
+        if status_code == 403:
+            return ForbiddenError()
         if status_code == 404:
             return NotFoundError()
         if status_code == 429:
             return RateLimitError()
-        if status_code == 500:
+        if 500 <= status_code <= 599:
             return InternalServerError()
         return APIError(f"Unexpected HTTP status code: {status_code}")
 

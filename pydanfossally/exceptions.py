@@ -11,6 +11,10 @@ class BadRequestError(APIError):
     """Raised when the API rejects the request payload."""
 
 
+class ForbiddenError(APIError):
+    """Raised when the API refuses access to the requested resource."""
+
+
 class RateLimitError(APIError):
     """Raised when the API throttles requests."""
 

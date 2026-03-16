@@ -11,7 +11,12 @@ import httpx
 
 from pydanfossally import DanfossAlly, parse_device_data
 from pydanfossally.danfossallyapi import API_HOST, DanfossAllyAPI
-from pydanfossally.exceptions import BadRequestError, RateLimitError
+from pydanfossally.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    InternalServerError,
+    RateLimitError,
+)
 
 
 TOKEN_RESPONSE = {"access_token": "token-123", "expires_in": 3600}
@@ -447,6 +452,38 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.initialize("key", "secret")
 
         with self.assertRaises(RateLimitError):
+            await ally.get_devices()
+
+    async def test_forbidden_maps_to_domain_exception(self) -> None:
+        """HTTP 403 should map to the dedicated forbidden exception."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(403, json={"title": "Forbidden"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        with self.assertRaises(ForbiddenError):
+            await ally.get_devices()
+
+    async def test_server_error_range_maps_to_domain_exception(self) -> None:
+        """HTTP 5xx responses should map to the dedicated server exception."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(503, json={"title": "Service Unavailable"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        with self.assertRaises(InternalServerError):
             await ally.get_devices()
 
 
