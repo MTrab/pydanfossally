@@ -1,9 +1,11 @@
 """Async communication layer for the Danfoss Ally API."""
+
 from __future__ import annotations
 
 import asyncio
 import base64
 import datetime
+from importlib import metadata
 import json
 import logging
 from typing import Any
@@ -35,6 +37,18 @@ _MODE_TO_LAST_CLICK_TIME_FORMAT_MAP = {
 }
 """Map mode to obscure format required by `last_click_time`."""
 
+_PACKAGE_NAME = "pydanfossally"
+_DEFAULT_USER_AGENT_SUFFIX = f"{_PACKAGE_NAME}/unknown"
+
+
+def _resolve_user_agent_suffix() -> str:
+    """Resolve the library user agent suffix from installed package metadata."""
+    try:
+        version = metadata.version(_PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        version = "unknown"
+    return f"{_PACKAGE_NAME}/{version}"
+
 
 class DanfossAllyAPI:
     """Async-first low-level Danfoss Ally API client."""
@@ -43,6 +57,7 @@ class DanfossAllyAPI:
         self,
         client: httpx.AsyncClient | None = None,
         timeout: float = DEFAULT_TIMEOUT,
+        user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the API client."""
         self._key = ""
@@ -52,6 +67,8 @@ class DanfossAllyAPI:
         self._owns_client = client is None
         self._timeout = timeout
         self._client = client
+        self._user_agent_prefix = user_agent_prefix
+        self._user_agent_suffix = _DEFAULT_USER_AGENT_SUFFIX
 
     async def __aenter__(self) -> DanfossAllyAPI:
         """Allow async context manager usage."""
@@ -73,9 +90,25 @@ class DanfossAllyAPI:
                 httpx.AsyncClient,
                 base_url=API_HOST,
                 timeout=self._timeout,
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": self._user_agent,
+                },
             )
         return self._client
+
+    async def _ensure_user_agent(self) -> None:
+        """Resolve the full user agent lazily inside an async code path."""
+        if self._user_agent_suffix != _DEFAULT_USER_AGENT_SUFFIX:
+            return
+        self._user_agent_suffix = await asyncio.to_thread(_resolve_user_agent_suffix)
+
+    @property
+    def _user_agent(self) -> str:
+        """Build the outgoing user agent string."""
+        if self._user_agent_prefix:
+            return f"{self._user_agent_prefix} {self._user_agent_suffix}"
+        return self._user_agent_suffix
 
     def _generate_base64_token(self, key: str, secret: str) -> str:
         """Generate a base64 encoded client credential token."""
@@ -87,6 +120,7 @@ class DanfossAllyAPI:
         return {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._token}",
+            "User-Agent": self._user_agent,
         }
 
     def _basic_auth_headers(self, token: str) -> dict[str, str]:
@@ -95,6 +129,7 @@ class DanfossAllyAPI:
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {token}",
+            "User-Agent": self._user_agent,
         }
 
     async def _request(
@@ -107,6 +142,7 @@ class DanfossAllyAPI:
         skip_auth_refresh: bool = False,
     ) -> dict[str, Any]:
         """Execute one HTTP request and map API errors to project exceptions."""
+        await self._ensure_user_agent()
         if not skip_auth_refresh:
             await self._refresh_token()
 
@@ -162,8 +198,11 @@ class DanfossAllyAPI:
 
         return await self.get_token()
 
-    async def get_token(self, key: str | None = None, secret: str | None = None) -> bool:
+    async def get_token(
+        self, key: str | None = None, secret: str | None = None
+    ) -> bool:
         """Retrieve and cache an OAuth2 access token."""
+        await self._ensure_user_agent()
         if key is not None:
             self._key = key
         if secret is not None:
@@ -194,7 +233,9 @@ class DanfossAllyAPI:
             _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
         except httpx.HTTPError:
-            _LOGGER.warning("Unexpected error occurred while requesting Danfoss Ally token")
+            _LOGGER.warning(
+                "Unexpected error occurred while requesting Danfoss Ally token"
+            )
             return False
         except json.JSONDecodeError:
             _LOGGER.warning("Bad request while requesting Danfoss Ally token")
@@ -239,7 +280,9 @@ class DanfossAllyAPI:
     ) -> bool:
         """Send generic commands to one device."""
         request_body = {
-            "commands": [{"code": code, "value": value} for code, value in listofcommands]
+            "commands": [
+                {"code": code, "value": value} for code, value in listofcommands
+            ]
         }
         _LOGGER.debug("Sending command to device %s: %s", device_id, request_body)
         response = await self._request(

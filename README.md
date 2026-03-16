@@ -25,6 +25,7 @@ ally = DanfossAlly(
     refresh_device_concurrency=2,
     refresh_device_min_interval=0.35,
     refresh_device_timeout=600,
+    user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
 )
 
 authorized = await ally.initialize(key, secret)
@@ -55,6 +56,7 @@ async def main() -> None:
         refresh_device_concurrency=2,
         refresh_device_min_interval=0.35,
         refresh_device_timeout=600,
+        user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
     ) as ally:
         authorized = await ally.initialize(os.environ["KEY"], os.environ["SECRET"])
         if not authorized:
@@ -111,6 +113,12 @@ Both knobs are configurable through `DanfossAlly(...)`:
   per-device refreshes
 - `refresh_device_timeout` controls how long a written device may stay on per-device refresh
   before the client falls back to the bulk endpoint only
+
+## User-Agent
+
+By default, the client sends a `User-Agent` header in the form `pydanfossally/<version>`.
+Integrations can prepend their own identifier through `user_agent_prefix`, resulting in a final
+header such as `HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/<version>`.
 
 ## Local verification
 
