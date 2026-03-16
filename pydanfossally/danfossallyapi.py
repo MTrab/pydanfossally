@@ -148,12 +148,6 @@ class DanfossAllyAPI:
 
         request_headers = headers or self._auth_headers()
         client = await self._async_get_client()
-        _LOGGER.debug(
-            "Sending %s request to %s with User-Agent: %s",
-            method,
-            path,
-            request_headers.get("User-Agent", ""),
-        )
 
         try:
             response = await client.request(
@@ -220,10 +214,6 @@ class DanfossAllyAPI:
         base64_token = self._generate_base64_token(self._key, self._secret)
         post_data = "grant_type=client_credentials"
         client = await self._async_get_client()
-        _LOGGER.debug(
-            "Requesting OAuth token with User-Agent: %s",
-            self._basic_auth_headers(base64_token).get("User-Agent", ""),
-        )
 
         try:
             req = await client.post(
