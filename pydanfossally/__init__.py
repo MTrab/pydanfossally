@@ -6,55 +6,20 @@ import asyncio
 import logging
 from typing import Any
 
+from .const import (
+    BOOLEAN_CODES,
+    DEVICE_DISCOVERY_INTERVAL,
+    MODE_TO_SETPOINT_CODE,
+    PASSTHROUGH_CODES,
+    REFRESH_DEVICE_CONCURRENCY,
+    REFRESH_DEVICE_MIN_INTERVAL,
+    SETPOINT_CODES,
+)
 from .danfossallyapi import DEFAULT_TIMEOUT, DanfossAllyAPI
 
 _LOGGER = logging.getLogger(__name__)
 
 __all__ = ["DanfossAlly", "DanfossAllyAPI", "parse_device_data"]
-
-_SETPOINT_CODES = {
-    "manual_mode_fast",
-    "at_home_setting",
-    "leaving_home_setting",
-    "pause_setting",
-    "holiday_setting",
-    "temp_set",
-}
-_BOOLEAN_CODES = {
-    "window_toggle",
-    "switch",
-    "switch_state",
-    "heat_supply_request",
-    "mounting_mode_active",
-    "heat_available",
-    "load_balance_enable",
-    "radiator_covered",
-}
-_PASSTHROUGH_CODES = {
-    "child_lock",
-    "mode",
-    "work_state",
-    "load_balance_enable",
-    "fault",
-    "sw_error_code",
-    "ctrl_alg",
-    "adaptation_runstatus",
-    "SetpointChangeSource",
-}
-
-_MODE_TO_SETPOINT_CODE = {
-    "at_home": "at_home_setting",
-    "home": "at_home_setting",
-    "leaving_home": "leaving_home_setting",
-    "away": "leaving_home_setting",
-    "pause": "pause_setting",
-    "manual": "manual_mode_fast",
-    "holiday": "holiday_setting",
-    "holiday_sat": "at_home_setting",
-}
-_REFRESH_DEVICE_CONCURRENCY = 5
-_REFRESH_DEVICE_MIN_INTERVAL = 0.10
-_DEVICE_DISCOVERY_INTERVAL = 3600.0
 
 
 def _normalize_bool(value: Any) -> bool | None:
@@ -98,7 +63,7 @@ def parse_device_data(
         value = status.get("value")
 
         try:
-            if code in _SETPOINT_CODES:
+            if code in SETPOINT_CODES:
                 parsed[code] = float(value) / 10
                 parsed["isThermostat"] = True
             elif code == "temp_current":
@@ -128,12 +93,12 @@ def parse_device_data(
                 parsed["load_room_mean"] = value
             elif code == "sensor_avg_temp":
                 parsed["external_sensor_temperature"] = float(value) / 10
-            elif code in _BOOLEAN_CODES:
+            elif code in BOOLEAN_CODES:
                 normalized = _normalize_bool(value)
                 if normalized is not None:
                     parsed[code.lower()] = normalized
 
-            if code in _PASSTHROUGH_CODES:
+            if code in PASSTHROUGH_CODES:
                 parsed[code.lower()] = value
         except (AttributeError, KeyError, TypeError, ValueError, IndexError) as err:
             _LOGGER.debug(
@@ -164,9 +129,9 @@ class DanfossAlly:
         self,
         api: DanfossAllyAPI | None = None,
         timeout: float = DEFAULT_TIMEOUT,
-        refresh_device_concurrency: int = _REFRESH_DEVICE_CONCURRENCY,
-        refresh_device_min_interval: float = _REFRESH_DEVICE_MIN_INTERVAL,
-        device_discovery_interval: float = _DEVICE_DISCOVERY_INTERVAL,
+        refresh_device_concurrency: int = REFRESH_DEVICE_CONCURRENCY,
+        refresh_device_min_interval: float = REFRESH_DEVICE_MIN_INTERVAL,
+        device_discovery_interval: float = DEVICE_DISCOVERY_INTERVAL,
         user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the connector."""
@@ -288,7 +253,9 @@ class DanfossAlly:
             return await self.get_devices()
 
         if self._should_refresh_device_discovery():
-            _LOGGER.debug("Device discovery interval elapsed; refreshing bulk device snapshot")
+            _LOGGER.debug(
+                "Device discovery interval elapsed; refreshing bulk device snapshot"
+            )
             await self.get_devices()
 
         device_ids = list(self.devices)
@@ -301,7 +268,9 @@ class DanfossAlly:
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
 
-        _LOGGER.debug("Refreshed %s known device(s) via realtime endpoint", len(device_ids))
+        _LOGGER.debug(
+            "Refreshed %s known device(s) via realtime endpoint", len(device_ids)
+        )
         return self.devices
 
     def _should_refresh_device_discovery(self) -> bool:
@@ -408,7 +377,7 @@ class DanfossAlly:
         if _uses_temp_set_fallback(device):
             return "temp_set"
 
-        return _MODE_TO_SETPOINT_CODE.get(mode, "manual_mode_fast")
+        return MODE_TO_SETPOINT_CODE.get(mode, "manual_mode_fast")
 
     @property
     def authorized(self) -> bool:
