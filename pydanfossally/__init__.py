@@ -54,6 +54,7 @@ _MODE_TO_SETPOINT_CODE = {
 }
 _REFRESH_DEVICE_CONCURRENCY = 5
 _REFRESH_DEVICE_MIN_INTERVAL = 0.10
+_DEVICE_DISCOVERY_INTERVAL = 3600.0
 
 
 def _normalize_bool(value: Any) -> bool | None:
@@ -165,6 +166,7 @@ class DanfossAlly:
         timeout: float = DEFAULT_TIMEOUT,
         refresh_device_concurrency: int = _REFRESH_DEVICE_CONCURRENCY,
         refresh_device_min_interval: float = _REFRESH_DEVICE_MIN_INTERVAL,
+        device_discovery_interval: float = _DEVICE_DISCOVERY_INTERVAL,
         user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the connector."""
@@ -172,6 +174,8 @@ class DanfossAlly:
             raise ValueError("refresh_device_concurrency must be at least 1")
         if refresh_device_min_interval < 0:
             raise ValueError("refresh_device_min_interval must be non-negative")
+        if device_discovery_interval < 0:
+            raise ValueError("device_discovery_interval must be non-negative")
 
         self._authorized = False
         self._token: str | None = None
@@ -182,8 +186,10 @@ class DanfossAlly:
         )
         self._refresh_device_concurrency = refresh_device_concurrency
         self._refresh_device_min_interval = refresh_device_min_interval
+        self._device_discovery_interval = device_discovery_interval
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
+        self._next_device_discovery_at = 0.0
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -223,6 +229,8 @@ class DanfossAlly:
         self.devices = {}
         for device in response["result"]:
             self._store_device(device, last_response_time=response.get("t"))
+
+        self._schedule_next_device_discovery()
 
         _LOGGER.debug(
             "Loaded %s devices from bulk snapshot with t=%s",
@@ -273,13 +281,17 @@ class DanfossAlly:
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
         """Refresh cached devices via their dedicated endpoints."""
-        device_ids = list(self.devices)
-        if not device_ids:
+        if not self.devices:
             _LOGGER.debug(
                 "Refresh requested without cached devices; loading bulk snapshot for discovery",
             )
             return await self.get_devices()
 
+        if self._should_refresh_device_discovery():
+            _LOGGER.debug("Device discovery interval elapsed; refreshing bulk device snapshot")
+            await self.get_devices()
+
+        device_ids = list(self.devices)
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
 
         async def refresh_one(device_id: str) -> None:
@@ -291,6 +303,16 @@ class DanfossAlly:
 
         _LOGGER.debug("Refreshed %s known device(s) via realtime endpoint", len(device_ids))
         return self.devices
+
+    def _should_refresh_device_discovery(self) -> bool:
+        """Return whether periodic bulk discovery should run before device refresh."""
+        return asyncio.get_running_loop().time() >= self._next_device_discovery_at
+
+    def _schedule_next_device_discovery(self) -> None:
+        """Schedule the next bulk device discovery pass."""
+        self._next_device_discovery_at = (
+            asyncio.get_running_loop().time() + self._device_discovery_interval
+        )
 
     async def set_temperature(
         self,

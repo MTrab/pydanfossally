@@ -13,7 +13,8 @@ async def main() -> None:
     """Run a simple read-only session against the Danfoss Ally API."""
     async with DanfossAlly(
         refresh_device_concurrency=5,
-        refresh_device_min_interval=0.35,
+        refresh_device_min_interval=0.10,
+        device_discovery_interval=3600,
     ) as ally:
         authorized = await ally.initialize(environ["KEY"], environ["SECRET"])
         if not authorized:
