@@ -289,7 +289,7 @@ class DanfossAlly:
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
 
-        _LOGGER.debug("Refreshed %s cached device(s) via realtime endpoint", len(device_ids))
+        _LOGGER.debug("Refreshed %s known device(s) via realtime endpoint", len(device_ids))
         return self.devices
 
     async def set_temperature(
