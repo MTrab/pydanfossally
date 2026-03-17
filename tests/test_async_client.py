@@ -310,6 +310,80 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("device-1", devices)
 
+    async def test_refresh_devices_skips_bulk_discovery_before_interval(self) -> None:
+        """Known devices should use direct refresh until the discovery interval elapses."""
+        bulk_calls = 0
+        realtime_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal bulk_calls, realtime_calls
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                bulk_calls += 1
+                return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+            if request.url.path == "/ally/devices/device-1":
+                realtime_calls += 1
+                return httpx.Response(200, json={"result": DEVICE_PAYLOAD, "t": 2})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(
+            api=await self._make_api(handler),
+            refresh_device_min_interval=0,
+            device_discovery_interval=3600,
+        )
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        await ally.refresh_devices()
+
+        self.assertEqual(bulk_calls, 1)
+        self.assertEqual(realtime_calls, 1)
+
+    async def test_refresh_devices_renews_bulk_discovery_after_interval(self) -> None:
+        """Hourly discovery should pick up new devices before direct refresh."""
+        bulk_calls = 0
+        realtime_calls: list[str] = []
+        second_device = {
+            **DEVICE_PAYLOAD,
+            "id": "device-2",
+            "name": " Bedroom ",
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal bulk_calls
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                bulk_calls += 1
+                if bulk_calls == 1:
+                    return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+                return httpx.Response(
+                    200,
+                    json={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
+                )
+            if request.url.path.startswith("/ally/devices/"):
+                device_id = request.url.path.rsplit("/", 1)[-1]
+                realtime_calls.append(device_id)
+                payload = DEVICE_PAYLOAD if device_id == "device-1" else second_device
+                return httpx.Response(200, json={"result": payload, "t": 3})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(
+            api=await self._make_api(handler),
+            refresh_device_min_interval=0,
+            device_discovery_interval=3600,
+        )
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        ally._next_device_discovery_at = asyncio.get_running_loop().time() - 1
+
+        devices = await ally.refresh_devices()
+
+        self.assertEqual(bulk_calls, 2)
+        self.assertCountEqual(realtime_calls, ["device-1", "device-2"])
+        self.assertIn("device-2", devices)
+
     def test_constructor_rejects_invalid_refresh_tuning(self) -> None:
         """Refresh tuning should reject invalid values early."""
         with self.assertRaises(ValueError):
@@ -317,6 +391,9 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             DanfossAlly(refresh_device_min_interval=-0.1)
+
+        with self.assertRaises(ValueError):
+            DanfossAlly(device_discovery_interval=-0.1)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
