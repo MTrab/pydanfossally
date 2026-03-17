@@ -275,7 +275,9 @@ class DanfossAlly:
         """Refresh cached devices via their dedicated endpoints."""
         device_ids = list(self.devices)
         if not device_ids:
-            _LOGGER.debug("Refresh requested without cache; falling back to bulk snapshot")
+            _LOGGER.debug(
+                "Refresh requested without cached devices; loading bulk snapshot for discovery",
+            )
             return await self.get_devices()
 
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)

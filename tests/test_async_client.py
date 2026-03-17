@@ -293,6 +293,23 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(started_at[1] - started_at[0], 0.015)
         self.assertGreaterEqual(started_at[2] - started_at[1], 0.015)
 
+    async def test_refresh_devices_falls_back_to_bulk_without_cache(self) -> None:
+        """Realtime refresh should load a bulk snapshot when discovery data is missing."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/oauth2/token":
+                return httpx.Response(200, json=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        devices = await ally.refresh_devices()
+
+        self.assertIn("device-1", devices)
+
     def test_constructor_rejects_invalid_refresh_tuning(self) -> None:
         """Refresh tuning should reject invalid values early."""
         with self.assertRaises(ValueError):
