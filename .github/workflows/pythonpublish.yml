@@ -2,6 +2,10 @@ name: Deploy to PyPI
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to publish, for example v1.0.3"
+        required: true
   release:
     types: [published]
 
@@ -15,16 +19,18 @@ jobs:
     env:
       POETRY_VIRTUALENVS_CREATE: "false"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
 
       - name: Install poetry
         run: |
           pipx install poetry
-          pipx inject poetry poetry-bumpversion
+          pipx inject poetry "poetry-dynamic-versioning[plugin]"
 
       - name: Build
         run: |
-          poetry version ${{ github.ref_name }}
           poetry build
 
       - name: Publish
