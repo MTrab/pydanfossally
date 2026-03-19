@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any
 
-import httpx
+import aiohttp
 
 from .exceptions import (
     APIError,
@@ -56,7 +56,7 @@ class DanfossAllyAPI:
 
     def __init__(
         self,
-        client: httpx.AsyncClient | None = None,
+        client: aiohttp.ClientSession | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         user_agent_prefix: str | None = None,
     ) -> None:
@@ -85,9 +85,9 @@ class DanfossAllyAPI:
     async def aclose(self) -> None:
         """Close the underlying async HTTP client when owned by this instance."""
         if self._owns_client and self._client is not None:
-            await self._client.aclose()
+            await self._client.close()
 
-    async def _async_get_client(self) -> httpx.AsyncClient:
+    async def _async_get_client(self) -> aiohttp.ClientSession:
         """Create the default async HTTP client on first use."""
         if self._client is None:
             _LOGGER.debug(
@@ -95,10 +95,9 @@ class DanfossAllyAPI:
                 API_HOST,
                 self._timeout,
             )
-            self._client = await asyncio.to_thread(
-                httpx.AsyncClient,
+            self._client = aiohttp.ClientSession(
                 base_url=API_HOST,
-                timeout=self._timeout,
+                timeout=aiohttp.ClientTimeout(total=self._timeout),
                 headers={
                     "Accept": "application/json",
                     "User-Agent": self._user_agent,
@@ -168,45 +167,48 @@ class DanfossAllyAPI:
         )
 
         try:
-            response = await client.request(
+            async with client.request(
                 method,
                 path,
                 json=payload,
                 headers=request_headers,
-            )
-            response.raise_for_status()
-            _LOGGER.debug(
-                "Received %s response for %s %s",
-                response.status_code,
-                method,
-                path,
-            )
-        except httpx.HTTPStatusError as err:
-            _LOGGER.debug(
-                "HTTP error for %s %s: status=%s",
-                method,
-                path,
-                err.response.status_code,
-            )
-            raise self._map_http_error(err) from err
-        except httpx.TimeoutException as err:
+            ) as response:
+                status_code = response.status
+                body = await response.read()
+        except asyncio.TimeoutError as err:
             _LOGGER.debug("Timeout while calling %s %s", method, path)
             raise TimeoutError from err
-        except httpx.ConnectError as err:
+        except aiohttp.ClientConnectionError as err:
             _LOGGER.debug("Connection error while calling %s %s", method, path)
             raise ConnectionError from err
-        except httpx.HTTPError as err:
+        except aiohttp.ClientError as err:
             _LOGGER.debug(
                 "Unexpected HTTP error while calling %s %s: %s", method, path, err
             )
             raise UnexpectedError from err
 
-        if not response.content:
+        if status_code >= 400:
+            _LOGGER.debug(
+                "HTTP error for %s %s: status=%s",
+                method,
+                path,
+                status_code,
+            )
+            raise self._map_http_error(status_code, path)
+
+        _LOGGER.debug(
+            "Received %s response for %s %s",
+            status_code,
+            method,
+            path,
+        )
+
+        if not body:
             _LOGGER.debug("Empty response body for %s %s", method, path)
             return {}
 
         try:
-            data = response.json()
+            data = json.loads(body)
             _LOGGER.debug(
                 "Decoded JSON response for %s %s with keys=%s",
                 method,
@@ -235,9 +237,8 @@ class DanfossAllyAPI:
         if delay > 0:
             await asyncio.sleep(delay)
 
-    def _map_http_error(self, err: httpx.HTTPStatusError) -> Exception:
+    def _map_http_error(self, status_code: int, path: str) -> Exception:
         """Translate HTTP failures into domain-specific exceptions."""
-        status_code = err.response.status_code
         if status_code == 400:
             mapped = BadRequestError()
         elif status_code == 401:
@@ -255,7 +256,7 @@ class DanfossAllyAPI:
         _LOGGER.debug(
             "Mapped HTTP status %s on %s to %s",
             status_code,
-            err.request.url.path,
+            path,
             mapped.__class__.__name__,
         )
         return mapped
@@ -289,40 +290,45 @@ class DanfossAllyAPI:
         await self._wait_for_request_slot()
 
         try:
-            req = await client.post(
+            async with client.post(
                 TOKEN_PATH,
-                content=post_data,
+                data=post_data,
                 headers=self._basic_auth_headers(base64_token),
-            )
-            req.raise_for_status()
-            response = req.json()
-            _LOGGER.debug("Token request succeeded with status %s", req.status_code)
-        except httpx.HTTPStatusError as err:
-            mapped_error = self._map_http_error(err)
-            if isinstance(mapped_error, (BadRequestError, UnauthorizedError)):
-                _LOGGER.warning("Token request rejected by Danfoss Ally API")
-                return False
-            raise mapped_error from err
-        except httpx.TimeoutException:
+            ) as response:
+                status_code = response.status
+                body = await response.read()
+        except asyncio.TimeoutError:
             _LOGGER.warning("Timeout communication with Danfoss Ally API")
             return False
-        except httpx.HTTPError:
+        except aiohttp.ClientError:
             _LOGGER.warning(
                 "Unexpected error occurred while requesting Danfoss Ally token"
             )
             return False
+
+        if status_code >= 400:
+            mapped_error = self._map_http_error(status_code, TOKEN_PATH)
+            if isinstance(mapped_error, (BadRequestError, UnauthorizedError)):
+                _LOGGER.warning("Token request rejected by Danfoss Ally API")
+                return False
+            raise mapped_error
+
+        try:
+            response_data = json.loads(body)
         except json.JSONDecodeError:
             _LOGGER.warning("Bad request while requesting Danfoss Ally token")
             return False
 
-        if "access_token" not in response or "expires_in" not in response:
+        _LOGGER.debug("Token request succeeded with status %s", status_code)
+
+        if "access_token" not in response_data or "expires_in" not in response_data:
             return False
 
-        expires_in = float(response["expires_in"])
+        expires_in = float(response_data["expires_in"])
         self._refresh_at = datetime.datetime.now() + datetime.timedelta(
             seconds=expires_in - 30
         )
-        self._token = response["access_token"]
+        self._token = response_data["access_token"]
         _LOGGER.debug("Stored OAuth token with expires_in=%s seconds", expires_in)
         return True
 
