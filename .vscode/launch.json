@@ -6,9 +6,12 @@
     "configurations": [
         {
             "name": "Basic Debug using example.py",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
+            "python": "/home/vscode/pydanfossally/.venv/bin/python",
             "program": "${workspaceFolder}/example.py",
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal",
             "justMyCode": true
         },
