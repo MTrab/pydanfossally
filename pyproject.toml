@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Malene Trab", email = "malene@trab.dk" }]
 requires-python = ">=3.9,<4.0"
-dependencies = ["httpx>=0.27.0,<1.0.0"]
+dependencies = ["aiohttp>=3.13.0,<4.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/mtrab/pydanfossally"

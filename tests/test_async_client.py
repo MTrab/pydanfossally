@@ -7,7 +7,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-import httpx
+from yarl import URL
 
 from pydanfossally import DanfossAlly, parse_device_data
 from pydanfossally.danfossallyapi import API_HOST, DanfossAllyAPI
@@ -55,6 +55,92 @@ THERMOSTAT_WITH_MODE_SETPOINTS = {
 }
 
 
+class MockRequest:
+    """Small request object for transport-free client tests."""
+
+    def __init__(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        content: bytes = b"",
+    ) -> None:
+        self.method = method
+        self.url = URL(url)
+        self.headers = headers
+        self.content = content
+
+
+class MockResponse:
+    """Async context manager that mimics aiohttp responses."""
+
+    def __init__(
+        self,
+        status: int,
+        *,
+        json_data: object | None = None,
+        body: bytes | None = None,
+    ) -> None:
+        self.status = status
+        if body is not None:
+            self._body = body
+        elif json_data is not None:
+            self._body = json.dumps(json_data).encode()
+        else:
+            self._body = b""
+
+    async def __aenter__(self) -> MockResponse:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def read(self) -> bytes:
+        return self._body
+
+
+class MockClientSession:
+    """Tiny stand-in for the async HTTP client."""
+
+    def __init__(
+        self,
+        handler,
+        *,
+        base_url: str = API_HOST,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._handler = handler
+        self._base_url = base_url.rstrip("/")
+        self._headers = headers or {}
+        self.closed = False
+
+    def request(self, method: str, path: str, **kwargs: object) -> MockResponse:
+        payload = kwargs.get("json")
+        headers = kwargs.get("headers")
+        content = b"" if payload is None else json.dumps(payload).encode()
+        merged_headers = {**self._headers, **dict(headers or {})}
+        return self._handler(
+            MockRequest(method, f"{self._base_url}{path}", merged_headers, content)
+        )
+
+    def post(self, path: str, **kwargs: object) -> MockResponse:
+        data = kwargs.get("data")
+        headers = kwargs.get("headers")
+        if isinstance(data, str):
+            content = data.encode()
+        elif isinstance(data, bytes):
+            content = data
+        else:
+            content = b""
+        merged_headers = {**self._headers, **dict(headers or {})}
+        return self._handler(
+            MockRequest("POST", f"{self._base_url}{path}", merged_headers, content)
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     """Exercise the async-first client stack."""
 
@@ -64,20 +150,18 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(api._client)
 
-        with patch("pydanfossally.danfossallyapi.httpx.AsyncClient") as async_client:
-            mocked_client = unittest.mock.AsyncMock()
-            mocked_client.post.return_value = httpx.Response(
-                200,
-                json=TOKEN_RESPONSE,
-                request=httpx.Request("POST", f"{API_HOST}/oauth2/token"),
-            )
-            async_client.return_value = mocked_client
+        with patch("pydanfossally.danfossallyapi.aiohttp.ClientSession") as session_cls:
+            response = MockResponse(200, json_data=TOKEN_RESPONSE)
+            mocked_client = unittest.mock.Mock()
+            mocked_client.post.return_value = response
+            mocked_client.close = unittest.mock.AsyncMock()
+            session_cls.return_value = mocked_client
 
             result = await api.get_token("key", "secret")
 
         self.assertTrue(result)
-        async_client.assert_called_once()
-        mocked_client.post.assert_awaited_once()
+        session_cls.assert_called_once()
+        mocked_client.post.assert_called_once()
         await api.aclose()
 
     def test_default_user_agent_starts_with_safe_fallback(self) -> None:
@@ -140,22 +224,19 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self,
         handler,
     ) -> DanfossAllyAPI:
-        client = httpx.AsyncClient(
-            base_url=API_HOST,
-            transport=httpx.MockTransport(handler),
-        )
-        self.addAsyncCleanup(client.aclose)
+        client = MockClientSession(handler, base_url=API_HOST)
+        self.addAsyncCleanup(client.close)
         return DanfossAllyAPI(client=client)
 
     async def test_get_devices_populates_wrapper_cache(self) -> None:
         """The wrapper should fetch and parse devices through the async API."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
                 self.assertEqual(request.headers["Authorization"], "Bearer token-123")
-                return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -173,11 +254,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_device_maps_last_response_time(self) -> None:
         """Single-device reads should keep the API response timestamp."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1":
-                return httpx.Response(200, json={"result": DEVICE_PAYLOAD, "t": 12})
+                return MockResponse(200, json_data={"result": DEVICE_PAYLOAD, "t": 12})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -191,18 +272,18 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_device_status_and_sub_devices(self) -> None:
         """Spec-defined read-only endpoints should be available."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/status":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [{"code": "temp_set", "value": 215}], "t": 2},
+                    json_data={"result": [{"code": "temp_set", "value": 215}], "t": 2},
                 )
             if request.url.path == "/ally/devices/device-1/sub-devices":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [{"id": "child-1", "name": "Child"}], "t": 3},
+                    json_data={"result": [{"id": "child-1", "name": "Child"}], "t": 3},
                 )
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -218,13 +299,13 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_device_uses_single_device_endpoint(self) -> None:
         """Per-device refresh should only use the single-device payload."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={
+                    json_data={
                         "result": {
                             **DEVICE_PAYLOAD,
                             "status": [
@@ -251,7 +332,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_devices_limits_parallelism_to_five(self) -> None:
         """Cached device refreshes should use bounded parallelism."""
         ally = DanfossAlly(
-            api=await self._make_api(lambda request: httpx.Response(200)),
+            api=await self._make_api(lambda request: MockResponse(200)),
             refresh_device_concurrency=5,
             refresh_device_min_interval=0,
         )
@@ -277,7 +358,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_devices_rate_limits_device_reads(self) -> None:
         """Cached device refreshes should be paced to avoid request bursts."""
         ally = DanfossAlly(
-            api=await self._make_api(lambda request: httpx.Response(200)),
+            api=await self._make_api(lambda request: MockResponse(200)),
             refresh_device_min_interval=0.02,
         )
         ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(3)}
@@ -299,11 +380,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_devices_falls_back_to_bulk_without_cache(self) -> None:
         """Realtime refresh should load a bulk snapshot when discovery data is missing."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -318,16 +399,16 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         bulk_calls = 0
         realtime_calls = 0
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             nonlocal bulk_calls, realtime_calls
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
                 bulk_calls += 1
-                return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
             if request.url.path == "/ally/devices/device-1":
                 realtime_calls += 1
-                return httpx.Response(200, json={"result": DEVICE_PAYLOAD, "t": 2})
+                return MockResponse(200, json_data={"result": DEVICE_PAYLOAD, "t": 2})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(
@@ -353,25 +434,25 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             "name": " Bedroom ",
         }
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             nonlocal bulk_calls
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
                 bulk_calls += 1
                 if bulk_calls == 1:
-                    return httpx.Response(
-                        200, json={"result": [DEVICE_PAYLOAD], "t": 1}
+                    return MockResponse(
+                        200, json_data={"result": [DEVICE_PAYLOAD], "t": 1}
                     )
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
+                    json_data={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
                 )
             if request.url.path.startswith("/ally/devices/"):
                 device_id = request.url.path.rsplit("/", 1)[-1]
                 realtime_calls.append(device_id)
                 payload = DEVICE_PAYLOAD if device_id == "device-1" else second_device
-                return httpx.Response(200, json={"result": payload, "t": 3})
+                return MockResponse(200, json_data={"result": payload, "t": 3})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(
@@ -402,7 +483,9 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_global_rate_limit_paces_reads_and_writes(self) -> None:
         """All outbound API calls should share the same global pacing."""
-        api = await self._make_api(lambda request: httpx.Response(200, json={"t": 1}))
+        api = await self._make_api(
+            lambda request: MockResponse(200, json_data={"t": 1})
+        )
         api._request_rate_limit = 50
         started_at: list[float] = []
 
@@ -419,16 +502,16 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 self.assertEqual(
                     payload,
                     {"commands": [{"code": "temp_set", "value": 220}]},
                 )
-                return httpx.Response(201, json={"result": True, "t": 4})
+                return MockResponse(201, json_data={"result": True, "t": 4})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -441,11 +524,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_command_accepts_timestamp_only_shape(self) -> None:
         """Command responses with only a timestamp should still be treated as success."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/commands":
-                return httpx.Response(201, json={"t": 5})
+                return MockResponse(201, json_data={"t": 5})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -458,22 +541,22 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Mode-aware temperature writes should set the matching mode first."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                    json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
                 )
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
-                    return httpx.Response(201, json={"result": True, "t": 6})
+                    return MockResponse(201, json_data={"result": True, "t": 6})
                 if payload == {
                     "commands": [{"code": "manual_mode_fast", "value": 230}]
                 }:
-                    return httpx.Response(201, json={"result": True, "t": 7})
+                    return MockResponse(201, json_data={"result": True, "t": 7})
                 raise AssertionError(f"Unexpected command payload: {payload}")
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -486,22 +569,22 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_set_manual_temperature_is_manual_mode_helper(self) -> None:
         """Manual temperature helper should reuse manual mode semantics."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                    json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
                 )
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
-                    return httpx.Response(201, json={"result": True, "t": 8})
+                    return MockResponse(201, json_data={"result": True, "t": 8})
                 if payload == {
                     "commands": [{"code": "manual_mode_fast", "value": 225}]
                 }:
-                    return httpx.Response(201, json={"result": True, "t": 9})
+                    return MockResponse(201, json_data={"result": True, "t": 9})
                 raise AssertionError(f"Unexpected command payload: {payload}")
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -514,9 +597,9 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_set_external_temperature_enables_radiator_covered(self) -> None:
         """External temperature writes should force covered-radiator mode."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 self.assertEqual(
@@ -529,7 +612,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                         ]
                     },
                 )
-                return httpx.Response(201, json={"result": True, "t": 14})
+                return MockResponse(201, json_data={"result": True, "t": 14})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -540,9 +623,9 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_set_radiator_covered_false_clears_external_temperature(self) -> None:
         """Disabling covered-radiator mode should clear external sensor values."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 self.assertEqual(
@@ -555,7 +638,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                         ]
                     },
                 )
-                return httpx.Response(201, json={"result": True, "t": 15})
+                return MockResponse(201, json_data={"result": True, "t": 15})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -568,20 +651,20 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Mode-aware temperature writes should switch back to schedule mode."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(
+                return MockResponse(
                     200,
-                    json={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
+                    json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
                 )
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 if payload["commands"][0] == {"code": "mode", "value": "at_home"}:
-                    return httpx.Response(201, json={"result": True, "t": 10})
+                    return MockResponse(201, json_data={"result": True, "t": 10})
                 if payload == {"commands": [{"code": "at_home_setting", "value": 210}]}:
-                    return httpx.Response(201, json={"result": True, "t": 11})
+                    return MockResponse(201, json_data={"result": True, "t": 11})
                 raise AssertionError(f"Unexpected command payload: {payload}")
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
@@ -596,11 +679,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_bad_request_maps_to_domain_exception(self) -> None:
         """HTTP 400 should map to the dedicated request exception."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices/device-1/commands":
-                return httpx.Response(400, json={"title": "Bad Request"})
+                return MockResponse(400, json_data={"title": "Bad Request"})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -612,11 +695,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_rate_limit_maps_to_domain_exception(self) -> None:
         """HTTP 429 should map to the dedicated throttling exception."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(429, json={"title": "Too Many Requests"})
+                return MockResponse(429, json_data={"title": "Too Many Requests"})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -628,11 +711,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_forbidden_maps_to_domain_exception(self) -> None:
         """HTTP 403 should map to the dedicated forbidden exception."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(403, json={"title": "Forbidden"})
+                return MockResponse(403, json_data={"title": "Forbidden"})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -644,11 +727,11 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_error_range_maps_to_domain_exception(self) -> None:
         """HTTP 5xx responses should map to the dedicated server exception."""
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
-                return httpx.Response(200, json=TOKEN_RESPONSE)
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
-                return httpx.Response(503, json={"title": "Service Unavailable"})
+                return MockResponse(503, json_data={"title": "Service Unavailable"})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
