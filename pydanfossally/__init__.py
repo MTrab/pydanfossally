@@ -15,7 +15,10 @@ from .const import (
     REFRESH_DEVICE_MIN_INTERVAL,
     SETPOINT_CODES,
 )
-from .danfossallyapi import DEFAULT_TIMEOUT, DanfossAllyAPI
+from .danfossallyapi import (
+    DEFAULT_TIMEOUT,
+    DanfossAllyAPI,
+)
 
 _LOGGER = logging.getLogger(__name__)
 

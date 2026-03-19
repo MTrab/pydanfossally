@@ -27,6 +27,7 @@ API_HOST = "https://api.danfoss.com"
 TOKEN_PATH = "/oauth2/token"
 ALLY_PREFIX = "/ally"
 DEFAULT_TIMEOUT = 10.0
+DEFAULT_REQUEST_RATE_LIMIT = 3.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +67,9 @@ class DanfossAllyAPI:
         self._refresh_at = datetime.datetime.min
         self._owns_client = client is None
         self._timeout = timeout
+        self._request_rate_limit: float | None = DEFAULT_REQUEST_RATE_LIMIT
+        self._request_rate_lock = asyncio.Lock()
+        self._next_request_slot = 0.0
         self._client = client
         self._user_agent_prefix = user_agent_prefix
         self._user_agent_suffix = _DEFAULT_USER_AGENT_SUFFIX
@@ -154,6 +158,7 @@ class DanfossAllyAPI:
 
         request_headers = headers or self._auth_headers()
         client = await self._async_get_client()
+        await self._wait_for_request_slot()
         _LOGGER.debug(
             "Sending %s %s (payload=%s, auth_refresh=%s)",
             method,
@@ -191,7 +196,9 @@ class DanfossAllyAPI:
             _LOGGER.debug("Connection error while calling %s %s", method, path)
             raise ConnectionError from err
         except httpx.HTTPError as err:
-            _LOGGER.debug("Unexpected HTTP error while calling %s %s: %s", method, path, err)
+            _LOGGER.debug(
+                "Unexpected HTTP error while calling %s %s: %s", method, path, err
+            )
             raise UnexpectedError from err
 
         if not response.content:
@@ -210,6 +217,23 @@ class DanfossAllyAPI:
         except json.JSONDecodeError as err:
             _LOGGER.debug("Failed to decode JSON response for %s %s", method, path)
             raise UnexpectedError from err
+
+    async def _wait_for_request_slot(self) -> None:
+        """Throttle outbound requests so the API does not receive bursts."""
+        if self._request_rate_limit is None:
+            return
+
+        loop = asyncio.get_running_loop()
+        min_interval = 1 / self._request_rate_limit
+
+        async with self._request_rate_lock:
+            now = loop.time()
+            scheduled_at = max(now, self._next_request_slot)
+            self._next_request_slot = scheduled_at + min_interval
+
+        delay = scheduled_at - loop.time()
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     def _map_http_error(self, err: httpx.HTTPStatusError) -> Exception:
         """Translate HTTP failures into domain-specific exceptions."""
@@ -262,6 +286,7 @@ class DanfossAllyAPI:
         base64_token = self._generate_base64_token(self._key, self._secret)
         post_data = "grant_type=client_credentials"
         client = await self._async_get_client()
+        await self._wait_for_request_slot()
 
         try:
             req = await client.post(
