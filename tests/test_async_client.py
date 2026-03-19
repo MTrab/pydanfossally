@@ -136,7 +136,10 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             "HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/1.2.3",
         )
 
-    async def _make_api(self, handler) -> DanfossAllyAPI:
+    async def _make_api(
+        self,
+        handler,
+    ) -> DanfossAllyAPI:
         client = httpx.AsyncClient(
             base_url=API_HOST,
             transport=httpx.MockTransport(handler),
@@ -357,7 +360,9 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/ally/devices":
                 bulk_calls += 1
                 if bulk_calls == 1:
-                    return httpx.Response(200, json={"result": [DEVICE_PAYLOAD], "t": 1})
+                    return httpx.Response(
+                        200, json={"result": [DEVICE_PAYLOAD], "t": 1}
+                    )
                 return httpx.Response(
                     200,
                     json={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
@@ -394,6 +399,22 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             DanfossAlly(device_discovery_interval=-0.1)
+
+    async def test_global_rate_limit_paces_reads_and_writes(self) -> None:
+        """All outbound API calls should share the same global pacing."""
+        api = await self._make_api(lambda request: httpx.Response(200, json={"t": 1}))
+        api._request_rate_limit = 50
+        started_at: list[float] = []
+
+        async def wait_for_slot() -> None:
+            await api._wait_for_request_slot()
+            started_at.append(asyncio.get_running_loop().time())
+
+        await asyncio.gather(wait_for_slot(), wait_for_slot(), wait_for_slot())
+
+        self.assertEqual(len(started_at), 3)
+        self.assertGreaterEqual(started_at[1] - started_at[0], 0.015)
+        self.assertGreaterEqual(started_at[2] - started_at[1], 0.015)
 
     async def test_send_command_accepts_result_shape(self) -> None:
         """Command responses with a result field should be accepted."""
