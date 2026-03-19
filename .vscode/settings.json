@@ -1,5 +1,6 @@
 {
     "python.envFile": "${workspaceFolder}/.env",
+    "python.defaultInterpreterPath": "/home/vscode/pydanfossally/.venv/bin/python",
     "files.eol": "\n",
     "editor.tabSize": 4,
     "python.analysis.autoSearchPaths": false,

@@ -10,6 +10,19 @@ Async-first Python client for the Danfoss Ally OpenAPI.
 pip install pydanfossally
 ```
 
+## Local development
+
+For local development with Poetry and VS Code debugging, this repository is configured to use
+an in-project virtual environment at `.venv`.
+
+```bash
+poetry install
+poetry run python example.py
+```
+
+If you already created a Poetry environment before this setting was added, recreate it once so
+Poetry installs dependencies into `.venv` for this repository.
+
 ## Async usage
 
 ### Long-lived client
@@ -121,5 +134,5 @@ header such as `HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/<version>`.
 
 ## Local verification
 
-The repository includes `test.py` as a small async read-only example that uses credentials from
-the environment.
+The repository includes `example.py` as a small async read-only example that uses credentials
+from the environment.
