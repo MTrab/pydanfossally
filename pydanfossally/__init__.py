@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict, deque
 import logging
 import re
+import time
 from typing import Any
 
 from .const import (
@@ -20,6 +22,7 @@ from .const import (
 )
 from .danfossallyapi import (
     DEFAULT_TIMEOUT,
+    DIAGNOSTIC_WINDOW_SECONDS,
     DanfossAllyAPI,
 )
 from .exceptions import InternalServerError, RateLimitError
@@ -186,12 +189,16 @@ class DanfossAlly:
         self._refresh_device_min_interval = refresh_device_min_interval
         self._device_discovery_interval = device_discovery_interval
         self._degraded_refresh_cooldown = degraded_refresh_cooldown
+        self._diagnostic_window = DIAGNOSTIC_WINDOW_SECONDS
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
         self._next_device_discovery_at = 0.0
         self._degraded_refresh_until = 0.0
         self._status_refresh_recovery_limit: int | None = None
-        self._status_refresh_unsupported: set[str] = set()
+        self._status_refresh_unsupported: dict[str, float] = {}
+        self._skipped_refresh_times: dict[str, deque[float]] = defaultdict(deque)
+        self._degraded_mode_entry_times: deque[float] = deque()
+        self._skipped_write_times: deque[float] = deque()
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -228,10 +235,37 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading devices")
             return self.devices
 
+        bulk_response_time = response.get("t")
+        previous_devices = self.devices
+        previous_metadata = self._device_metadata
         self.devices = {}
         self._device_metadata = {}
         for device in response["result"]:
-            self._store_device(device, last_response_time=response.get("t"))
+            device_id = device["id"]
+            cached_device = previous_devices.get(device_id)
+            cached_metadata = previous_metadata.get(device_id)
+            cached_response_time = (
+                cached_device.get("last_response_time") if cached_device else None
+            )
+
+            if (
+                bulk_response_time is not None
+                and isinstance(cached_response_time, (int, float))
+                and cached_response_time > bulk_response_time
+                and cached_metadata is not None
+            ):
+                self.devices[device_id] = cached_device.copy()
+                self._device_metadata[device_id] = dict(cached_metadata)
+                _LOGGER.debug(
+                    "Keeping cached device %s because cached t=%s is newer than bulk t=%s",
+                    device_id,
+                    cached_response_time,
+                    bulk_response_time,
+                )
+                self._record_skipped_refresh("stale_bulk_device")
+                continue
+
+            self._store_device(device, last_response_time=bulk_response_time)
 
         self._schedule_next_device_discovery()
 
@@ -240,6 +274,7 @@ class DanfossAlly:
             len(self.devices),
             response.get("t"),
         )
+        self._log_diagnostics("bulk device snapshot")
         return self.devices
 
     async def get_device(self, device_id: str) -> dict[str, Any] | None:
@@ -277,7 +312,8 @@ class DanfossAlly:
                 "Status refresh is unsupported for device %s; falling back to full device reads",
                 device_id,
             )
-            self._status_refresh_unsupported.add(device_id)
+            self._status_refresh_unsupported[device_id] = time.monotonic()
+            self._log_diagnostics("unsupported status refresh fallback")
             return await self.get_device(device_id)
 
     async def refresh_device_status(self, device_id: str) -> dict[str, Any] | None:
@@ -329,10 +365,12 @@ class DanfossAlly:
 
         device_ids = self._get_high_priority_refresh_candidates()
         if not device_ids:
+            self._record_skipped_refresh("no_high_priority_candidates")
             _LOGGER.debug("No high-priority devices eligible for per-device refresh")
             return self.devices
 
         if self._is_degraded_refresh_active():
+            self._record_skipped_refresh("degraded_mode", len(device_ids))
             _LOGGER.debug(
                 "Per-device refreshes are in cooldown until %.3f; returning bulk-backed cache only",
                 self._degraded_refresh_until,
@@ -350,6 +388,7 @@ class DanfossAlly:
             nonlocal rate_limited
             async with semaphore:
                 if rate_limited:
+                    self._record_skipped_refresh("rate_limited_remainder")
                     return
                 await self._wait_for_refresh_slot()
                 try:
@@ -465,6 +504,7 @@ class DanfossAlly:
         """Update operating mode for one device."""
         device = self.devices.get(device_id)
         if device and self._cached_command_matches(device, "mode", mode):
+            self._record_timestamp(self._skipped_write_times)
             _LOGGER.debug(
                 "Skipping mode update for device %s because cached mode already matches %s",
                 device_id,
@@ -481,6 +521,7 @@ class DanfossAlly:
     ) -> bool:
         """Send generic commands for one device."""
         if self._should_skip_cached_command_call(device_id, listofcommands):
+            self._record_timestamp(self._skipped_write_times)
             _LOGGER.debug(
                 "Skipping command(s) for device %s because cached state already matches",
                 device_id,
@@ -572,6 +613,23 @@ class DanfossAlly:
             return False
         return _values_match(device[expected_key], expected_value)
 
+    def _record_skipped_refresh(self, reason: str, count: int = 1) -> None:
+        """Count refreshes that were skipped by policy or cooldown."""
+        timestamps = self._skipped_refresh_times[reason]
+        for _ in range(count):
+            self._record_timestamp(timestamps)
+
+    def _record_timestamp(self, timestamps: deque[float]) -> None:
+        """Record one diagnostics event in the rolling window."""
+        timestamps.append(time.monotonic())
+        self._prune_timestamps(timestamps)
+
+    def _prune_timestamps(self, timestamps: deque[float]) -> None:
+        """Drop diagnostics entries that fall outside the rolling window."""
+        cutoff = time.monotonic() - self._diagnostic_window
+        while timestamps and timestamps[0] < cutoff:
+            timestamps.popleft()
+
     def _is_high_priority_device(self, device_id: str) -> bool:
         """Classify devices that deserve near-realtime refreshes."""
         parsed = self.devices.get(device_id, {})
@@ -618,10 +676,12 @@ class DanfossAlly:
             max(now, self._degraded_refresh_until) + self._degraded_refresh_cooldown
         )
         self._status_refresh_recovery_limit = 1
+        self._record_timestamp(self._degraded_mode_entry_times)
         _LOGGER.debug(
             "Entering degraded refresh mode until %.3f after rate limiting",
             self._degraded_refresh_until,
         )
+        self._log_diagnostics("degraded refresh entry")
 
     def _advance_status_refresh_recovery(self, total_candidates: int) -> None:
         """Gradually restore per-device refresh breadth after cooldown."""
@@ -653,3 +713,58 @@ class DanfossAlly:
     def token(self) -> str | None:
         """Return the cached bearer token."""
         return self._token
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return lightweight diagnostics for refresh tuning and debugging."""
+        skipped_refreshes: dict[str, int] = {}
+        for reason, timestamps in self._skipped_refresh_times.items():
+            self._prune_timestamps(timestamps)
+            if timestamps:
+                skipped_refreshes[reason] = len(timestamps)
+
+        self._prune_timestamps(self._degraded_mode_entry_times)
+        self._prune_timestamps(self._skipped_write_times)
+
+        cutoff = time.monotonic() - self._diagnostic_window
+        unsupported_status_devices = sorted(
+            device_id
+            for device_id, seen_at in self._status_refresh_unsupported.items()
+            if seen_at >= cutoff
+        )
+        return {
+            "request_counts": self._api.get_diagnostics()["request_counts"],
+            "skipped_refreshes": dict(sorted(skipped_refreshes.items())),
+            "degraded_mode_entries": len(self._degraded_mode_entry_times),
+            "unsupported_status_devices": unsupported_status_devices,
+            "unsupported_status_device_count": len(unsupported_status_devices),
+            "skipped_write_calls": len(self._skipped_write_times),
+        }
+
+    def _log_diagnostics(self, context: str) -> None:
+        """Emit a compact diagnostics snapshot in debug logs."""
+        diagnostics = self.get_diagnostics()
+        _LOGGER.debug(
+            "Diagnostics after %s (last %sm)",
+            context,
+            int(self._diagnostic_window // 60),
+        )
+        for endpoint, count in diagnostics["request_counts"].items():
+            _LOGGER.debug("  requests.%s=%s", endpoint, count)
+        for reason, count in diagnostics["skipped_refreshes"].items():
+            _LOGGER.debug("  skipped_refreshes.%s=%s", reason, count)
+        _LOGGER.debug(
+            "  degraded_mode_entries=%s",
+            diagnostics["degraded_mode_entries"],
+        )
+        _LOGGER.debug(
+            "  unsupported_status_device_count=%s",
+            diagnostics["unsupported_status_device_count"],
+        )
+        _LOGGER.debug(
+            "  unsupported_status_devices=%s",
+            ", ".join(diagnostics["unsupported_status_devices"]) or "none",
+        )
+        _LOGGER.debug(
+            "  skipped_write_calls=%s",
+            diagnostics["skipped_write_calls"],
+        )
