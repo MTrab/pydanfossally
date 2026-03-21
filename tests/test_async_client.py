@@ -346,6 +346,65 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status[0]["code"], "temp_set")
         self.assertEqual(sub_devices[0]["id"], "child-1")
 
+    async def test_api_diagnostics_count_requests_per_normalized_endpoint(self) -> None:
+        """API diagnostics should count requests by stable endpoint names."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+            if request.url.path == "/ally/devices/device-1/status":
+                return MockResponse(
+                    200,
+                    json_data={"result": [{"code": "temp_set", "value": 215}], "t": 2},
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                return MockResponse(201, json_data={"result": True, "t": 3})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        await ally.get_device_status("device-1")
+        await ally.send_command("device-1", [("temp_set", 220)])
+
+        diagnostics = ally.get_diagnostics()
+
+        self.assertEqual(diagnostics["request_counts"]["/oauth2/token"], 1)
+        self.assertEqual(diagnostics["request_counts"]["/ally/devices"], 1)
+        self.assertEqual(
+            diagnostics["request_counts"]["/ally/devices/{device_id}/status"], 1
+        )
+        self.assertEqual(
+            diagnostics["request_counts"]["/ally/devices/{device_id}/commands"], 1
+        )
+
+    async def test_bulk_diagnostics_log_one_key_per_line(self) -> None:
+        """Bulk diagnostics should log a readable one-key-per-line summary."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        with self.assertLogs("pydanfossally", level="DEBUG") as captured_logs:
+            await ally.get_devices()
+
+        log_output = "\n".join(captured_logs.output)
+        self.assertIn(
+            "Diagnostics after bulk device snapshot (last 60m)",
+            log_output,
+        )
+        self.assertIn("requests./ally/devices=1", log_output)
+        self.assertIn("unsupported_status_device_count=0", log_output)
+        self.assertIn("skipped_write_calls=0", log_output)
+
     async def test_refresh_device_uses_status_endpoint_when_supported(self) -> None:
         """High-priority devices should prefer the status endpoint."""
         status_calls = 0
@@ -742,6 +801,10 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.refresh_devices()
         self.assertCountEqual(refreshed_ids, ["device-1", "device-1", "device-2"])
 
+        diagnostics = ally.get_diagnostics()
+        self.assertEqual(diagnostics["degraded_mode_entries"], 1)
+        self.assertEqual(diagnostics["skipped_refreshes"]["degraded_mode"], 2)
+
     async def test_global_rate_limit_paces_reads_and_writes(self) -> None:
         """All outbound API calls should share the same global pacing."""
         api = await self._make_api(
@@ -1028,6 +1091,41 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.get_devices()
 
         self.assertTrue(await ally.set_external_temperature("device-1", 25.0))
+
+    async def test_diagnostics_track_skipped_write_calls_and_unsupported_status(
+        self,
+    ) -> None:
+        """Wrapper diagnostics should expose skipped writes and unsupported status devices."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(
+                    200, json_data={"result": [ROOM_SENSOR_PAYLOAD], "t": 1}
+                )
+            if request.url.path == "/ally/devices/sensor-1/status":
+                return MockResponse(500, json_data={"title": "Internal Server Error"})
+            if request.url.path == "/ally/devices/sensor-1":
+                return MockResponse(
+                    200,
+                    json_data={"result": ROOM_SENSOR_PAYLOAD, "t": 15},
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        await ally.refresh_device("sensor-1")
+
+        ally._store_device(THERMOSTAT_WITH_MODE_SETPOINTS)  # type: ignore[attr-defined]
+        await ally.set_temperature("device-1", 21.5, code="manual_mode_fast")
+
+        diagnostics = ally.get_diagnostics()
+
+        self.assertEqual(diagnostics["skipped_write_calls"], 1)
+        self.assertEqual(diagnostics["unsupported_status_device_count"], 1)
+        self.assertEqual(diagnostics["unsupported_status_devices"], ["sensor-1"])
 
     async def test_set_radiator_covered_false_clears_external_temperature(self) -> None:
         """Disabling covered-radiator mode should clear external sensor values."""

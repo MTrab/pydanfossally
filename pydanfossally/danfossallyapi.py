@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import defaultdict, deque
 import datetime
 from importlib import metadata
 import json
 import logging
+import re
+import time
 from typing import Any
 
 import aiohttp
@@ -28,6 +31,7 @@ TOKEN_PATH = "/oauth2/token"
 ALLY_PREFIX = "/ally"
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_REQUEST_RATE_LIMIT = 3.0
+DIAGNOSTIC_WINDOW_SECONDS = 3600.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +44,7 @@ _MODE_TO_LAST_CLICK_TIME_FORMAT_MAP = {
 
 _PACKAGE_NAME = "pydanfossally"
 _DEFAULT_USER_AGENT_SUFFIX = f"{_PACKAGE_NAME}/unknown"
+_DEVICE_PATH_PATTERN = re.compile(r"^/ally/devices/[^/]+")
 
 
 def _resolve_user_agent_suffix() -> str:
@@ -49,6 +54,15 @@ def _resolve_user_agent_suffix() -> str:
     except metadata.PackageNotFoundError:
         version = "unknown"
     return f"{_PACKAGE_NAME}/{version}"
+
+
+def _normalize_endpoint_path(path: str) -> str:
+    """Normalize dynamic device paths into stable endpoint names."""
+    if path == TOKEN_PATH:
+        return path
+    if path.startswith(f"{ALLY_PREFIX}/devices/"):
+        return _DEVICE_PATH_PATTERN.sub(f"{ALLY_PREFIX}/devices/{{device_id}}", path)
+    return path
 
 
 class DanfossAllyAPI:
@@ -73,6 +87,8 @@ class DanfossAllyAPI:
         self._client = client
         self._user_agent_prefix = user_agent_prefix
         self._user_agent_suffix = _DEFAULT_USER_AGENT_SUFFIX
+        self._diagnostic_window = DIAGNOSTIC_WINDOW_SECONDS
+        self._endpoint_request_times: dict[str, deque[float]] = defaultdict(deque)
 
     async def __aenter__(self) -> DanfossAllyAPI:
         """Allow async context manager usage."""
@@ -158,6 +174,7 @@ class DanfossAllyAPI:
         request_headers = headers or self._auth_headers()
         client = await self._async_get_client()
         await self._wait_for_request_slot()
+        self._record_request(path)
         _LOGGER.debug(
             "Sending %s %s (payload=%s, auth_refresh=%s)",
             method,
@@ -261,6 +278,19 @@ class DanfossAllyAPI:
         )
         return mapped
 
+    def _record_request(self, path: str) -> None:
+        """Count requests by normalized endpoint path."""
+        endpoint = _normalize_endpoint_path(path)
+        timestamps = self._endpoint_request_times[endpoint]
+        timestamps.append(time.monotonic())
+        self._prune_timestamps(timestamps)
+
+    def _prune_timestamps(self, timestamps: deque[float]) -> None:
+        """Drop diagnostics entries that fall outside the rolling window."""
+        cutoff = time.monotonic() - self._diagnostic_window
+        while timestamps and timestamps[0] < cutoff:
+            timestamps.popleft()
+
     async def _refresh_token(self) -> bool:
         """Refresh OAuth2 token when it has expired."""
         if self._refresh_at > datetime.datetime.now():
@@ -288,6 +318,7 @@ class DanfossAllyAPI:
         post_data = "grant_type=client_credentials"
         client = await self._async_get_client()
         await self._wait_for_request_slot()
+        self._record_request(TOKEN_PATH)
 
         try:
             async with client.post(
@@ -412,3 +443,14 @@ class DanfossAllyAPI:
     def token(self) -> str:
         """Return the cached OAuth token."""
         return self._token
+
+    def get_diagnostics(self) -> dict[str, dict[str, int]]:
+        """Return lightweight API diagnostics for debugging and tuning."""
+        request_counts: dict[str, int] = {}
+        for endpoint, timestamps in self._endpoint_request_times.items():
+            self._prune_timestamps(timestamps)
+            if timestamps:
+                request_counts[endpoint] = len(timestamps)
+        return {
+            "request_counts": dict(sorted(request_counts.items())),
+        }
