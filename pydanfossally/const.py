@@ -34,6 +34,11 @@ PASSTHROUGH_CODES = {
     "SetpointChangeSource",
 }
 
+LOW_PRIORITY_DEVICE_TYPES = {
+    "danfoss ally boiler relay",
+    "danfoss ally gateway",
+}
+
 MODE_TO_SETPOINT_CODE = {
     "at_home": "at_home_setting",
     "home": "at_home_setting",

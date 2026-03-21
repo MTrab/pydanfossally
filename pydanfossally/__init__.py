@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from .const import (
     BOOLEAN_CODES,
     DEGRADED_REFRESH_COOLDOWN,
     DEVICE_DISCOVERY_INTERVAL,
+    LOW_PRIORITY_DEVICE_TYPES,
     MODE_TO_SETPOINT_CODE,
     PASSTHROUGH_CODES,
     REFRESH_DEVICE_CONCURRENCY,
@@ -130,6 +132,14 @@ def _uses_temp_set_fallback(device: dict[str, Any]) -> bool:
 def _copy_status_entries(statuses: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Create a detached copy of device status entries."""
     return [dict(status) for status in statuses]
+
+
+def _normalize_device_type(value: Any) -> str:
+    """Normalize device types for stable priority lookups."""
+    if not isinstance(value, str):
+        return ""
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower())
+    return " ".join(normalized.split())
 
 
 class DanfossAlly:
@@ -504,6 +514,12 @@ class DanfossAlly:
             or parsed.get("model")
             or ""
         ).lower()
+        normalized_device_type = _normalize_device_type(
+            metadata.get("device_type") or metadata.get("model") or parsed.get("model")
+        )
+
+        if normalized_device_type in LOW_PRIORITY_DEVICE_TYPES:
+            return False
 
         if "gateway" in model or "controller" in model:
             return False

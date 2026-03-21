@@ -49,6 +49,17 @@ GATEWAY_PAYLOAD = {
     ],
 }
 
+BOILER_RELAY_PAYLOAD = {
+    "id": "relay-1",
+    "name": " Boiler relay ",
+    "online": True,
+    "update_time": 123459,
+    "device_type": "Danfoss Ally\u2122 Boiler Relay",
+    "status": [
+        {"code": "switch_state", "value": "true"},
+    ],
+}
+
 ROOM_SENSOR_PAYLOAD = {
     "id": "sensor-1",
     "name": " Bedroom sensor ",
@@ -665,6 +676,17 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.refresh_devices()
 
         self.assertEqual(status_calls, ["device-1"])
+
+    def test_known_low_priority_device_types_are_bulk_only(self) -> None:
+        """Known infrastructure device types should stay out of high-priority refreshes."""
+        ally = DanfossAlly()
+        ally._store_device(BOILER_RELAY_PAYLOAD)  # type: ignore[attr-defined]
+        ally._store_device(GATEWAY_PAYLOAD)  # type: ignore[attr-defined]
+        ally._store_device(DEVICE_PAYLOAD)  # type: ignore[attr-defined]
+
+        self.assertFalse(ally._is_high_priority_device("relay-1"))  # type: ignore[attr-defined]
+        self.assertFalse(ally._is_high_priority_device("gateway-1"))  # type: ignore[attr-defined]
+        self.assertTrue(ally._is_high_priority_device("device-1"))  # type: ignore[attr-defined]
 
     def test_constructor_rejects_invalid_refresh_tuning(self) -> None:
         """Refresh tuning should reject invalid values early."""
