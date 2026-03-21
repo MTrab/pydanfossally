@@ -319,6 +319,122 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         assert device is not None
         self.assertEqual(device["last_response_time"], 12)
 
+    async def test_get_devices_keeps_newer_realtime_cache_than_bulk(self) -> None:
+        """Bulk refresh should not overwrite a device with older than cached realtime data."""
+        bulk_calls = 0
+
+        def handler(request: MockRequest) -> MockResponse:
+            nonlocal bulk_calls
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                bulk_calls += 1
+                if bulk_calls == 1:
+                    return MockResponse(
+                        200, json_data={"result": [DEVICE_PAYLOAD], "t": 10}
+                    )
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": [
+                            {
+                                **DEVICE_PAYLOAD,
+                                "status": [
+                                    {"code": "temp_set", "value": 180},
+                                    {"code": "temp_current", "value": 181},
+                                ],
+                            }
+                        ],
+                        "t": 11,
+                    },
+                )
+            if request.url.path == "/ally/devices/device-1":
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": {
+                            **DEVICE_PAYLOAD,
+                            "status": [
+                                {"code": "temp_set", "value": 230},
+                                {"code": "temp_current", "value": 205},
+                            ],
+                        },
+                        "t": 20,
+                    },
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        await ally.get_device("device-1")
+
+        devices = await ally.get_devices()
+
+        self.assertEqual(devices["device-1"]["temp_set"], 23.0)
+        self.assertEqual(devices["device-1"]["temperature"], 20.5)
+        self.assertEqual(devices["device-1"]["last_response_time"], 20)
+        self.assertEqual(
+            ally.get_diagnostics()["skipped_refreshes"]["stale_bulk_device"],
+            1,
+        )
+
+    async def test_get_devices_accepts_newer_bulk_than_cached_realtime(self) -> None:
+        """Bulk refresh should overwrite cached devices when the bulk timestamp is newer."""
+        bulk_calls = 0
+
+        def handler(request: MockRequest) -> MockResponse:
+            nonlocal bulk_calls
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                bulk_calls += 1
+                if bulk_calls == 1:
+                    return MockResponse(
+                        200, json_data={"result": [DEVICE_PAYLOAD], "t": 10}
+                    )
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": [
+                            {
+                                **DEVICE_PAYLOAD,
+                                "status": [
+                                    {"code": "temp_set", "value": 180},
+                                    {"code": "temp_current", "value": 181},
+                                ],
+                            }
+                        ],
+                        "t": 30,
+                    },
+                )
+            if request.url.path == "/ally/devices/device-1":
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": {
+                            **DEVICE_PAYLOAD,
+                            "status": [
+                                {"code": "temp_set", "value": 230},
+                                {"code": "temp_current", "value": 205},
+                            ],
+                        },
+                        "t": 20,
+                    },
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        await ally.get_device("device-1")
+
+        devices = await ally.get_devices()
+
+        self.assertEqual(devices["device-1"]["temp_set"], 18.0)
+        self.assertEqual(devices["device-1"]["temperature"], 18.1)
+        self.assertEqual(devices["device-1"]["last_response_time"], 30)
+
     async def test_get_device_status_and_sub_devices(self) -> None:
         """Spec-defined read-only endpoints should be available."""
 

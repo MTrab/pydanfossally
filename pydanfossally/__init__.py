@@ -235,10 +235,37 @@ class DanfossAlly:
             _LOGGER.error("Something went wrong loading devices")
             return self.devices
 
+        bulk_response_time = response.get("t")
+        previous_devices = self.devices
+        previous_metadata = self._device_metadata
         self.devices = {}
         self._device_metadata = {}
         for device in response["result"]:
-            self._store_device(device, last_response_time=response.get("t"))
+            device_id = device["id"]
+            cached_device = previous_devices.get(device_id)
+            cached_metadata = previous_metadata.get(device_id)
+            cached_response_time = (
+                cached_device.get("last_response_time") if cached_device else None
+            )
+
+            if (
+                bulk_response_time is not None
+                and isinstance(cached_response_time, (int, float))
+                and cached_response_time > bulk_response_time
+                and cached_metadata is not None
+            ):
+                self.devices[device_id] = cached_device.copy()
+                self._device_metadata[device_id] = dict(cached_metadata)
+                _LOGGER.debug(
+                    "Keeping cached device %s because cached t=%s is newer than bulk t=%s",
+                    device_id,
+                    cached_response_time,
+                    bulk_response_time,
+                )
+                self._record_skipped_refresh("stale_bulk_device")
+                continue
+
+            self._store_device(device, last_response_time=bulk_response_time)
 
         self._schedule_next_device_discovery()
 
