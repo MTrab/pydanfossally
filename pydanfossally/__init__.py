@@ -142,6 +142,15 @@ def _normalize_device_type(value: Any) -> str:
     return " ".join(normalized.split())
 
 
+def _values_match(current: Any, expected: Any) -> bool:
+    """Compare cached and desired values with light numeric tolerance."""
+    if isinstance(current, bool) or isinstance(expected, bool):
+        return current is expected
+    if isinstance(current, (int, float)) and isinstance(expected, (int, float)):
+        return abs(float(current) - float(expected)) < 0.001
+    return current == expected
+
+
 class DanfossAlly:
     """Async-first Danfoss Ally API connector."""
 
@@ -454,6 +463,14 @@ class DanfossAlly:
 
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
+        device = self.devices.get(device_id)
+        if device and self._cached_command_matches(device, "mode", mode):
+            _LOGGER.debug(
+                "Skipping mode update for device %s because cached mode already matches %s",
+                device_id,
+                mode,
+            )
+            return True
         _LOGGER.debug("Setting mode for device %s to %s", device_id, mode)
         return await self._api.set_mode(device_id, mode)
 
@@ -463,12 +480,20 @@ class DanfossAlly:
         listofcommands: list[tuple[str, Any]],
     ) -> bool:
         """Send generic commands for one device."""
+        commands_to_send = self._filter_cached_noop_commands(device_id, listofcommands)
+        if not commands_to_send:
+            _LOGGER.debug(
+                "Skipping command(s) for device %s because cached state already matches",
+                device_id,
+            )
+            return True
+
         _LOGGER.debug(
             "Sending generic command(s) for device %s with codes=%s",
             device_id,
-            [code for code, _ in listofcommands],
+            [code for code, _ in commands_to_send],
         )
-        return await self._api.send_command(device_id, listofcommands)
+        return await self._api.send_command(device_id, commands_to_send)
 
     def _store_device(
         self,
@@ -500,6 +525,54 @@ class DanfossAlly:
             for device_id in self.devices
             if self._is_high_priority_device(device_id)
         ]
+
+    def _filter_cached_noop_commands(
+        self,
+        device_id: str,
+        commands: list[tuple[str, Any]],
+    ) -> list[tuple[str, Any]]:
+        """Drop commands whose desired state already matches the cached device."""
+        device = self.devices.get(device_id)
+        if not device:
+            return commands
+        filtered_commands: list[tuple[str, Any]] = []
+        for code, value in commands:
+            if self._cached_command_matches(device, code, value):
+                _LOGGER.debug(
+                    "Skipping command %s for device %s because cached value already matches %s",
+                    code,
+                    device_id,
+                    value,
+                )
+                continue
+            filtered_commands.append((code, value))
+        return filtered_commands
+
+    def _cached_command_matches(
+        self,
+        device: dict[str, Any],
+        code: str,
+        value: Any,
+    ) -> bool:
+        """Return whether a command already matches the cached parsed state."""
+        expected_key = code.lower()
+        expected_value = value
+
+        if code in SETPOINT_CODES:
+            expected_value = float(value) / 10
+        elif code in BOOLEAN_CODES:
+            expected_value = _normalize_bool(value)
+        elif code == "ext_measured_rs":
+            expected_value = float(value) / 100
+        elif code == "sensor_avg_temp":
+            expected_key = "external_sensor_temperature"
+            expected_value = float(value) / 10
+        elif code != "mode":
+            return False
+
+        if expected_value is None or expected_key not in device:
+            return False
+        return _values_match(device[expected_key], expected_value)
 
     def _is_high_priority_device(self, device_id: str) -> bool:
         """Classify devices that deserve near-realtime refreshes."""
