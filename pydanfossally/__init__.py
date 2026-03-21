@@ -480,8 +480,7 @@ class DanfossAlly:
         listofcommands: list[tuple[str, Any]],
     ) -> bool:
         """Send generic commands for one device."""
-        commands_to_send = self._filter_cached_noop_commands(device_id, listofcommands)
-        if not commands_to_send:
+        if self._should_skip_cached_command_call(device_id, listofcommands):
             _LOGGER.debug(
                 "Skipping command(s) for device %s because cached state already matches",
                 device_id,
@@ -491,9 +490,9 @@ class DanfossAlly:
         _LOGGER.debug(
             "Sending generic command(s) for device %s with codes=%s",
             device_id,
-            [code for code, _ in commands_to_send],
+            [code for code, _ in listofcommands],
         )
-        return await self._api.send_command(device_id, commands_to_send)
+        return await self._api.send_command(device_id, listofcommands)
 
     def _store_device(
         self,
@@ -526,27 +525,26 @@ class DanfossAlly:
             if self._is_high_priority_device(device_id)
         ]
 
-    def _filter_cached_noop_commands(
+    def _should_skip_cached_command_call(
         self,
         device_id: str,
         commands: list[tuple[str, Any]],
-    ) -> list[tuple[str, Any]]:
-        """Drop commands whose desired state already matches the cached device."""
+    ) -> bool:
+        """Return whether all commands already match the cached device state."""
         device = self.devices.get(device_id)
         if not device:
-            return commands
-        filtered_commands: list[tuple[str, Any]] = []
+            return False
         for code, value in commands:
-            if self._cached_command_matches(device, code, value):
-                _LOGGER.debug(
-                    "Skipping command %s for device %s because cached value already matches %s",
-                    code,
-                    device_id,
-                    value,
-                )
-                continue
-            filtered_commands.append((code, value))
-        return filtered_commands
+            if not self._cached_command_matches(device, code, value):
+                return False
+        for code, value in commands:
+            _LOGGER.debug(
+                "Skipping command %s for device %s because cached value already matches %s",
+                code,
+                device_id,
+                value,
+            )
+        return True
 
     def _cached_command_matches(
         self,
