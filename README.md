@@ -37,7 +37,8 @@ ally = DanfossAlly(
     timeout=30,
     refresh_device_concurrency=5,
     refresh_device_min_interval=0.10,
-    device_discovery_interval=3600,
+    device_discovery_interval=600,
+    degraded_refresh_cooldown=600,
     user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
 )
 
@@ -68,7 +69,8 @@ async def main() -> None:
         timeout=30,
         refresh_device_concurrency=5,
         refresh_device_min_interval=0.10,
-        device_discovery_interval=3600,
+        device_discovery_interval=600,
+        degraded_refresh_cooldown=600,
         user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
     ) as ally:
         authorized = await ally.initialize(os.environ["KEY"], os.environ["SECRET"])
@@ -114,9 +116,15 @@ device-specific status or command codes. That means:
 
 ## Refresh behavior
 
-The library keeps `refresh_device()` on the near-realtime `GET /ally/devices/{device_id}`
-endpoint. Bulk discovery through `GET /ally/devices` is used when the cache is empty and then
-again on a slower periodic interval so newly added devices can be discovered.
+The library uses a hybrid refresh strategy. Bulk reads from `GET /ally/devices` populate the
+cache, refresh low-priority devices such as gateways, and run again every 10 minutes to keep
+discovery current. High-priority devices such as thermostats and room sensors prefer the
+lighter `GET /ally/devices/{device_id}/status` endpoint, and the returned statuses are merged
+with cached metadata before parsing.
+
+If the API responds with HTTP 429 during per-device refreshes, the client enters a temporary
+bulk-only cooldown. Once the cooldown expires, per-device refreshes resume gradually instead of
+all at once.
 
 Both knobs are configurable through `DanfossAlly(...)`:
 
@@ -124,7 +132,9 @@ Both knobs are configurable through `DanfossAlly(...)`:
 - `refresh_device_min_interval` controls the minimum delay in seconds between starting two
   per-device refreshes
 - `device_discovery_interval` controls how often the bulk `/ally/devices` endpoint is used to
-  discover newly added devices
+  discover newly added devices and refresh low-priority ones
+- `degraded_refresh_cooldown` controls how long the client stays in bulk-only mode after a
+  per-device refresh is rate limited
 
 ## User-Agent
 

@@ -34,6 +34,11 @@ PASSTHROUGH_CODES = {
     "SetpointChangeSource",
 }
 
+LOW_PRIORITY_DEVICE_TYPES = {
+    "danfoss ally boiler relay",
+    "danfoss ally gateway",
+}
+
 MODE_TO_SETPOINT_CODE = {
     "at_home": "at_home_setting",
     "home": "at_home_setting",
@@ -47,4 +52,5 @@ MODE_TO_SETPOINT_CODE = {
 
 REFRESH_DEVICE_CONCURRENCY = 5
 REFRESH_DEVICE_MIN_INTERVAL = 0.10
-DEVICE_DISCOVERY_INTERVAL = 3600.0
+DEVICE_DISCOVERY_INTERVAL = 600.0
+DEGRADED_REFRESH_COOLDOWN = 600.0
