@@ -762,7 +762,7 @@ class DanfossAlly:
         )
         _LOGGER.debug(
             "  unsupported_status_devices=%s",
-            ", ".join(diagnostics["unsupported_status_devices"]),
+            ", ".join(diagnostics["unsupported_status_devices"]) or "none",
         )
         _LOGGER.debug(
             "  skipped_write_calls=%s",

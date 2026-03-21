@@ -519,6 +519,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("requests./ally/devices=1", log_output)
         self.assertIn("unsupported_status_device_count=0", log_output)
+        self.assertIn("unsupported_status_devices=none", log_output)
         self.assertIn("skipped_write_calls=0", log_output)
 
     async def test_refresh_device_uses_status_endpoint_when_supported(self) -> None:
