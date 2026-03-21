@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,29 @@ DEVICE_PAYLOAD = {
     ],
 }
 
+GATEWAY_PAYLOAD = {
+    "id": "gateway-1",
+    "name": " Gateway ",
+    "online": True,
+    "update_time": 123457,
+    "device_type": "Danfoss Ally Gateway",
+    "status": [
+        {"code": "mode", "value": "connected"},
+    ],
+}
+
+ROOM_SENSOR_PAYLOAD = {
+    "id": "sensor-1",
+    "name": " Bedroom sensor ",
+    "online": True,
+    "update_time": 123458,
+    "device_type": "Danfoss Ally Room Sensor",
+    "status": [
+        {"code": "local_temperature", "value": 2134},
+        {"code": "humidity_value", "value": 501},
+    ],
+}
+
 THERMOSTAT_WITH_MODE_SETPOINTS = {
     **DEVICE_PAYLOAD,
     "status": [
@@ -53,6 +77,21 @@ THERMOSTAT_WITH_MODE_SETPOINTS = {
         {"code": "mode", "value": "manual"},
     ],
 }
+
+
+def clone_device_payload(
+    payload: dict[str, object],
+    *,
+    device_id: str | None = None,
+    name: str | None = None,
+) -> dict[str, object]:
+    """Clone a payload and optionally override core identifiers."""
+    clone = copy.deepcopy(payload)
+    if device_id is not None:
+        clone["id"] = device_id
+    if name is not None:
+        clone["name"] = name
+    return clone
 
 
 class MockRequest:
@@ -296,31 +335,38 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status[0]["code"], "temp_set")
         self.assertEqual(sub_devices[0]["id"], "child-1")
 
-    async def test_refresh_device_uses_single_device_endpoint(self) -> None:
-        """Per-device refresh should only use the single-device payload."""
+    async def test_refresh_device_uses_status_endpoint_when_supported(self) -> None:
+        """High-priority devices should prefer the status endpoint."""
+        status_calls = 0
+        device_calls = 0
 
         def handler(request: MockRequest) -> MockResponse:
+            nonlocal status_calls, device_calls
             if request.url.path == "/oauth2/token":
                 return MockResponse(200, json_data=TOKEN_RESPONSE)
-            if request.url.path == "/ally/devices/device-1":
+            if request.url.path == "/ally/devices":
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+            if request.url.path == "/ally/devices/device-1/status":
+                status_calls += 1
                 return MockResponse(
                     200,
                     json_data={
-                        "result": {
-                            **DEVICE_PAYLOAD,
-                            "status": [
-                                {"code": "temp_set", "value": 230},
-                                {"code": "temp_current", "value": 205},
-                                {"code": "mode", "value": "manual"},
-                            ],
-                        },
+                        "result": [
+                            {"code": "temp_set", "value": 230},
+                            {"code": "temp_current", "value": 205},
+                            {"code": "mode", "value": "manual"},
+                        ],
                         "t": 13,
                     },
                 )
+            if request.url.path == "/ally/devices/device-1":
+                device_calls += 1
+                return MockResponse(200, json_data={"result": DEVICE_PAYLOAD, "t": 12})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
         await ally.initialize("key", "secret")
+        await ally.get_devices()
 
         device = await ally.refresh_device("device-1")
 
@@ -328,6 +374,95 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(device["temp_set"], 23.0)
         self.assertEqual(device["temperature"], 20.5)
         self.assertEqual(device["last_response_time"], 13)
+        self.assertEqual(device["name"], "Living room")
+        self.assertEqual(device["model"], "Danfoss Ally Thermostat")
+        self.assertEqual(status_calls, 1)
+        self.assertEqual(device_calls, 0)
+
+    async def test_refresh_device_status_merges_cached_metadata(self) -> None:
+        """Status refresh should preserve non-status metadata from the cache."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+            if request.url.path == "/ally/devices/device-1/status":
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": [
+                            {"code": "temp_set", "value": 225},
+                            {"code": "temp_current", "value": 198},
+                            {"code": "mode", "value": "manual"},
+                        ],
+                        "t": 14,
+                    },
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        device = await ally.refresh_device_status("device-1")
+
+        assert device is not None
+        self.assertEqual(device["name"], "Living room")
+        self.assertEqual(device["model"], "Danfoss Ally Thermostat")
+        self.assertEqual(device["temp_set"], 22.5)
+        self.assertEqual(device["temperature"], 19.8)
+        self.assertEqual(device["last_response_time"], 14)
+        self.assertEqual(
+            ally._device_metadata["device-1"]["name"],  # type: ignore[attr-defined]
+            " Living room ",
+        )
+        self.assertEqual(
+            ally._device_metadata["device-1"]["status"][0]["value"],  # type: ignore[attr-defined]
+            225,
+        )
+
+    async def test_refresh_device_falls_back_after_unsupported_status_error(
+        self,
+    ) -> None:
+        """Stable status-endpoint failures should switch the device to full refreshes."""
+        status_calls = 0
+        device_calls = 0
+
+        def handler(request: MockRequest) -> MockResponse:
+            nonlocal status_calls, device_calls
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(
+                    200, json_data={"result": [ROOM_SENSOR_PAYLOAD], "t": 1}
+                )
+            if request.url.path == "/ally/devices/sensor-1/status":
+                status_calls += 1
+                return MockResponse(500, json_data={"title": "Internal Server Error"})
+            if request.url.path == "/ally/devices/sensor-1":
+                device_calls += 1
+                return MockResponse(
+                    200,
+                    json_data={"result": ROOM_SENSOR_PAYLOAD, "t": 15},
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        first_refresh = await ally.refresh_device("sensor-1")
+        second_refresh = await ally.refresh_device("sensor-1")
+
+        assert first_refresh is not None
+        assert second_refresh is not None
+        self.assertEqual(status_calls, 1)
+        self.assertEqual(device_calls, 2)
+        self.assertIn(
+            "sensor-1",
+            ally._status_refresh_unsupported,  # type: ignore[attr-defined]
+        )
 
     async def test_refresh_devices_limits_parallelism_to_five(self) -> None:
         """Cached device refreshes should use bounded parallelism."""
@@ -336,7 +471,14 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             refresh_device_concurrency=5,
             refresh_device_min_interval=0,
         )
-        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(8)}
+        for idx in range(8):
+            ally._store_device(  # type: ignore[attr-defined]
+                clone_device_payload(
+                    DEVICE_PAYLOAD,
+                    device_id=f"device-{idx}",
+                    name=f" Thermostat {idx} ",
+                )
+            )
 
         active_calls = 0
         max_active_calls = 0
@@ -361,7 +503,14 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             api=await self._make_api(lambda request: MockResponse(200)),
             refresh_device_min_interval=0.02,
         )
-        ally.devices = {f"device-{idx}": {"id": f"device-{idx}"} for idx in range(3)}
+        for idx in range(3):
+            ally._store_device(  # type: ignore[attr-defined]
+                clone_device_payload(
+                    DEVICE_PAYLOAD,
+                    device_id=f"device-{idx}",
+                    name=f" Thermostat {idx} ",
+                )
+            )
 
         started_at: list[float] = []
 
@@ -397,18 +546,27 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_refresh_devices_skips_bulk_discovery_before_interval(self) -> None:
         """Known devices should use direct refresh until the discovery interval elapses."""
         bulk_calls = 0
-        realtime_calls = 0
+        status_calls = 0
 
         def handler(request: MockRequest) -> MockResponse:
-            nonlocal bulk_calls, realtime_calls
+            nonlocal bulk_calls, status_calls
             if request.url.path == "/oauth2/token":
                 return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
                 bulk_calls += 1
                 return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
-            if request.url.path == "/ally/devices/device-1":
-                realtime_calls += 1
-                return MockResponse(200, json_data={"result": DEVICE_PAYLOAD, "t": 2})
+            if request.url.path == "/ally/devices/device-1/status":
+                status_calls += 1
+                return MockResponse(
+                    200,
+                    json_data={
+                        "result": [
+                            {"code": "temp_set", "value": 230},
+                            {"code": "temp_current", "value": 205},
+                        ],
+                        "t": 2,
+                    },
+                )
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(
@@ -422,17 +580,17 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.refresh_devices()
 
         self.assertEqual(bulk_calls, 1)
-        self.assertEqual(realtime_calls, 1)
+        self.assertEqual(status_calls, 1)
 
     async def test_refresh_devices_renews_bulk_discovery_after_interval(self) -> None:
         """Hourly discovery should pick up new devices before direct refresh."""
         bulk_calls = 0
-        realtime_calls: list[str] = []
-        second_device = {
-            **DEVICE_PAYLOAD,
-            "id": "device-2",
-            "name": " Bedroom ",
-        }
+        status_calls: list[str] = []
+        second_device = clone_device_payload(
+            DEVICE_PAYLOAD,
+            device_id="device-2",
+            name=" Bedroom ",
+        )
 
         def handler(request: MockRequest) -> MockResponse:
             nonlocal bulk_calls
@@ -448,11 +606,13 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                     200,
                     json_data={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
                 )
-            if request.url.path.startswith("/ally/devices/"):
-                device_id = request.url.path.rsplit("/", 1)[-1]
-                realtime_calls.append(device_id)
+            if request.url.path.endswith("/status"):
+                device_id = request.url.path.split("/")[-2]
+                status_calls.append(device_id)
                 payload = DEVICE_PAYLOAD if device_id == "device-1" else second_device
-                return MockResponse(200, json_data={"result": payload, "t": 3})
+                return MockResponse(
+                    200, json_data={"result": payload["status"], "t": 3}
+                )
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(
@@ -467,8 +627,44 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         devices = await ally.refresh_devices()
 
         self.assertEqual(bulk_calls, 2)
-        self.assertCountEqual(realtime_calls, ["device-1", "device-2"])
+        self.assertCountEqual(status_calls, ["device-1", "device-2"])
         self.assertIn("device-2", devices)
+
+    async def test_refresh_devices_leaves_low_priority_devices_on_bulk_only(
+        self,
+    ) -> None:
+        """Gateways and similar devices should not use per-device refreshes."""
+        status_calls: list[str] = []
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(
+                    200,
+                    json_data={"result": [DEVICE_PAYLOAD, GATEWAY_PAYLOAD], "t": 1},
+                )
+            if request.url.path == "/ally/devices/device-1/status":
+                status_calls.append("device-1")
+                return MockResponse(
+                    200,
+                    json_data={"result": DEVICE_PAYLOAD["status"], "t": 2},
+                )
+            if request.url.path.startswith("/ally/devices/gateway-1"):
+                raise AssertionError("Gateway should remain bulk-only")
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(
+            api=await self._make_api(handler),
+            refresh_device_min_interval=0,
+            device_discovery_interval=3600,
+        )
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        await ally.refresh_devices()
+
+        self.assertEqual(status_calls, ["device-1"])
 
     def test_constructor_rejects_invalid_refresh_tuning(self) -> None:
         """Refresh tuning should reject invalid values early."""
@@ -480,6 +676,49 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             DanfossAlly(device_discovery_interval=-0.1)
+
+        with self.assertRaises(ValueError):
+            DanfossAlly(degraded_refresh_cooldown=-0.1)
+
+    async def test_refresh_devices_enters_degraded_mode_on_rate_limit(self) -> None:
+        """429 during per-device refresh should trigger bulk-only cooldown and recovery."""
+        ally = DanfossAlly(
+            api=await self._make_api(lambda request: MockResponse(200)),
+            refresh_device_concurrency=1,
+            refresh_device_min_interval=0,
+            degraded_refresh_cooldown=30,
+        )
+        ally._store_device(clone_device_payload(DEVICE_PAYLOAD, device_id="device-1"))  # type: ignore[attr-defined]
+        ally._store_device(clone_device_payload(DEVICE_PAYLOAD, device_id="device-2"))  # type: ignore[attr-defined]
+
+        refreshed_ids: list[str] = []
+        attempts = 0
+
+        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RateLimitError()
+            refreshed_ids.append(device_id)
+            return {"id": device_id}
+
+        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+
+        await ally.refresh_devices()
+        self.assertGreater(
+            ally._degraded_refresh_until,  # type: ignore[attr-defined]
+            asyncio.get_running_loop().time(),
+        )
+
+        await ally.refresh_devices()
+        self.assertEqual(refreshed_ids, [])
+
+        ally._degraded_refresh_until = asyncio.get_running_loop().time() - 1  # type: ignore[attr-defined]
+        await ally.refresh_devices()
+        self.assertEqual(refreshed_ids, ["device-1"])
+
+        await ally.refresh_devices()
+        self.assertCountEqual(refreshed_ids, ["device-1", "device-1", "device-2"])
 
     async def test_global_rate_limit_paces_reads_and_writes(self) -> None:
         """All outbound API calls should share the same global pacing."""

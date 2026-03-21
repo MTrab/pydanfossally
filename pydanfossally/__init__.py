@@ -8,6 +8,7 @@ from typing import Any
 
 from .const import (
     BOOLEAN_CODES,
+    DEGRADED_REFRESH_COOLDOWN,
     DEVICE_DISCOVERY_INTERVAL,
     MODE_TO_SETPOINT_CODE,
     PASSTHROUGH_CODES,
@@ -19,6 +20,7 @@ from .danfossallyapi import (
     DEFAULT_TIMEOUT,
     DanfossAllyAPI,
 )
+from .exceptions import InternalServerError, RateLimitError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,6 +127,11 @@ def _uses_temp_set_fallback(device: dict[str, Any]) -> bool:
     }.issubset(device)
 
 
+def _copy_status_entries(statuses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Create a detached copy of device status entries."""
+    return [dict(status) for status in statuses]
+
+
 class DanfossAlly:
     """Async-first Danfoss Ally API connector."""
 
@@ -135,6 +142,7 @@ class DanfossAlly:
         refresh_device_concurrency: int = REFRESH_DEVICE_CONCURRENCY,
         refresh_device_min_interval: float = REFRESH_DEVICE_MIN_INTERVAL,
         device_discovery_interval: float = DEVICE_DISCOVERY_INTERVAL,
+        degraded_refresh_cooldown: float = DEGRADED_REFRESH_COOLDOWN,
         user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the connector."""
@@ -144,10 +152,13 @@ class DanfossAlly:
             raise ValueError("refresh_device_min_interval must be non-negative")
         if device_discovery_interval < 0:
             raise ValueError("device_discovery_interval must be non-negative")
+        if degraded_refresh_cooldown < 0:
+            raise ValueError("degraded_refresh_cooldown must be non-negative")
 
         self._authorized = False
         self._token: str | None = None
         self.devices: dict[str, dict[str, Any]] = {}
+        self._device_metadata: dict[str, dict[str, Any]] = {}
         self._api = api or DanfossAllyAPI(
             timeout=timeout,
             user_agent_prefix=user_agent_prefix,
@@ -155,9 +166,13 @@ class DanfossAlly:
         self._refresh_device_concurrency = refresh_device_concurrency
         self._refresh_device_min_interval = refresh_device_min_interval
         self._device_discovery_interval = device_discovery_interval
+        self._degraded_refresh_cooldown = degraded_refresh_cooldown
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
         self._next_device_discovery_at = 0.0
+        self._degraded_refresh_until = 0.0
+        self._status_refresh_recovery_limit: int | None = None
+        self._status_refresh_unsupported: set[str] = set()
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -195,6 +210,7 @@ class DanfossAlly:
             return self.devices
 
         self.devices = {}
+        self._device_metadata = {}
         for device in response["result"]:
             self._store_device(device, last_response_time=response.get("t"))
 
@@ -231,8 +247,39 @@ class DanfossAlly:
         return response.get("result", [])
 
     async def refresh_device(self, device_id: str) -> dict[str, Any] | None:
-        """Refresh one cached device via its dedicated device endpoint."""
-        return await self.get_device(device_id)
+        """Refresh one cached device via status or device endpoints."""
+        if not self._should_use_status_refresh(device_id):
+            return await self.get_device(device_id)
+
+        try:
+            return await self.refresh_device_status(device_id)
+        except InternalServerError:
+            _LOGGER.debug(
+                "Status refresh is unsupported for device %s; falling back to full device reads",
+                device_id,
+            )
+            self._status_refresh_unsupported.add(device_id)
+            return await self.get_device(device_id)
+
+    async def refresh_device_status(self, device_id: str) -> dict[str, Any] | None:
+        """Refresh one cached device via the lighter status endpoint."""
+        metadata = self._device_metadata.get(device_id)
+        if metadata is None:
+            _LOGGER.debug(
+                "Status refresh requested without cached metadata for device %s; loading full device",
+                device_id,
+            )
+            return await self.get_device(device_id)
+
+        _LOGGER.debug("Fetching status-only refresh for device %s", device_id)
+        response = await self._api.get_device_status(device_id)
+        statuses = response.get("result", [])
+        synthetic_device = self._merge_status_into_metadata(device_id, statuses)
+        return self._store_device(
+            synthetic_device,
+            last_response_time=response.get("t"),
+            preserve_metadata=True,
+        )
 
     async def _wait_for_refresh_slot(self) -> None:
         """Space refreshes out so the API does not receive a burst of device reads."""
@@ -248,7 +295,7 @@ class DanfossAlly:
             await asyncio.sleep(delay)
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
-        """Refresh cached devices via their dedicated endpoints."""
+        """Refresh cached devices with hybrid bulk and per-device reads."""
         if not self.devices:
             _LOGGER.debug(
                 "Refresh requested without cached devices; loading bulk snapshot for discovery",
@@ -261,18 +308,47 @@ class DanfossAlly:
             )
             await self.get_devices()
 
-        device_ids = list(self.devices)
+        device_ids = self._get_high_priority_refresh_candidates()
+        if not device_ids:
+            _LOGGER.debug("No high-priority devices eligible for per-device refresh")
+            return self.devices
+
+        if self._is_degraded_refresh_active():
+            _LOGGER.debug(
+                "Per-device refreshes are in cooldown until %.3f; returning bulk-backed cache only",
+                self._degraded_refresh_until,
+            )
+            return self.devices
+
+        recovery_limit = self._status_refresh_recovery_limit
+        if recovery_limit is not None:
+            device_ids = device_ids[:recovery_limit]
+
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
+        rate_limited = False
 
         async def refresh_one(device_id: str) -> None:
+            nonlocal rate_limited
             async with semaphore:
+                if rate_limited:
+                    return
                 await self._wait_for_refresh_slot()
-                await self.refresh_device(device_id)
+                try:
+                    await self.refresh_device(device_id)
+                except RateLimitError:
+                    rate_limited = True
+                    self._enter_degraded_refresh_mode()
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
 
+        if not rate_limited:
+            self._advance_status_refresh_recovery(
+                len(self._get_high_priority_refresh_candidates())
+            )
+
         _LOGGER.debug(
-            "Refreshed %s known device(s) via realtime endpoint", len(device_ids)
+            "Refreshed %s high-priority device(s) via hybrid endpoint selection",
+            len(device_ids),
         )
         return self.devices
 
@@ -285,6 +361,28 @@ class DanfossAlly:
         self._next_device_discovery_at = (
             asyncio.get_running_loop().time() + self._device_discovery_interval
         )
+
+    def _store_device_metadata(self, device: dict[str, Any]) -> dict[str, Any]:
+        """Cache the raw device payload for future status merges."""
+        metadata = dict(device)
+        statuses = metadata.get("status")
+        if isinstance(statuses, list):
+            metadata["status"] = _copy_status_entries(statuses)
+        device_id = metadata["id"]
+        self._device_metadata[device_id] = metadata
+        return metadata
+
+    def _merge_status_into_metadata(
+        self,
+        device_id: str,
+        statuses: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Merge fresh status entries into cached metadata for parser reuse."""
+        metadata = self._device_metadata[device_id]
+        merged = dict(metadata)
+        merged["status"] = _copy_status_entries(statuses)
+        self._device_metadata[device_id] = merged
+        return merged
 
     async def set_temperature(
         self,
@@ -367,13 +465,90 @@ class DanfossAlly:
         device: dict[str, Any],
         *,
         last_response_time: int | None = None,
+        preserve_metadata: bool = False,
     ) -> dict[str, Any]:
         """Parse and cache one device payload."""
+        if preserve_metadata:
+            statuses = device.get("status")
+            if isinstance(statuses, list):
+                self._device_metadata[device["id"]]["status"] = _copy_status_entries(
+                    statuses
+                )
+        else:
+            device = self._store_device_metadata(device)
+
         parsed = parse_device_data(device, last_response_time=last_response_time)
         device_id = device["id"]
         self.devices[device_id] = parsed
         _LOGGER.debug("Stored parsed state for device %s", device_id)
         return parsed
+
+    def _get_high_priority_refresh_candidates(self) -> list[str]:
+        """Return devices that should receive per-device refreshes."""
+        return [
+            device_id
+            for device_id in self.devices
+            if self._is_high_priority_device(device_id)
+        ]
+
+    def _is_high_priority_device(self, device_id: str) -> bool:
+        """Classify devices that deserve near-realtime refreshes."""
+        parsed = self.devices.get(device_id, {})
+        if parsed.get("isThermostat"):
+            return True
+
+        metadata = self._device_metadata.get(device_id, {})
+        model = str(
+            metadata.get("model")
+            or metadata.get("device_type")
+            or parsed.get("model")
+            or ""
+        ).lower()
+
+        if "gateway" in model or "controller" in model:
+            return False
+        if "sensor" in model:
+            return True
+        return False
+
+    def _should_use_status_refresh(self, device_id: str) -> bool:
+        """Return whether status refresh should be attempted for one device."""
+        return (
+            device_id in self._device_metadata
+            and self._is_high_priority_device(device_id)
+            and device_id not in self._status_refresh_unsupported
+        )
+
+    def _is_degraded_refresh_active(self) -> bool:
+        """Return whether per-device refreshes are temporarily disabled."""
+        return asyncio.get_running_loop().time() < self._degraded_refresh_until
+
+    def _enter_degraded_refresh_mode(self) -> None:
+        """Disable per-device refreshes until the cooldown elapses."""
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        self._degraded_refresh_until = (
+            max(now, self._degraded_refresh_until) + self._degraded_refresh_cooldown
+        )
+        self._status_refresh_recovery_limit = 1
+        _LOGGER.debug(
+            "Entering degraded refresh mode until %.3f after rate limiting",
+            self._degraded_refresh_until,
+        )
+
+    def _advance_status_refresh_recovery(self, total_candidates: int) -> None:
+        """Gradually restore per-device refresh breadth after cooldown."""
+        if self._status_refresh_recovery_limit is None or total_candidates < 1:
+            return
+        if self._is_degraded_refresh_active():
+            return
+        if self._status_refresh_recovery_limit >= total_candidates:
+            self._status_refresh_recovery_limit = None
+            return
+        self._status_refresh_recovery_limit = min(
+            total_candidates,
+            self._status_refresh_recovery_limit * 2,
+        )
 
     def _get_setpoint_code_for_mode(self, device: dict[str, Any], mode: str) -> str:
         """Resolve the Danfoss setpoint field for one mode."""
