@@ -17,6 +17,9 @@ Homepage = "https://github.com/mtrab/pydanfossally"
 Repository = "https://github.com/mtrab/pydanfossally"
 
 [tool.poetry]
+name = "pydanfossally"
+description = "Danfoss Ally API library"
+authors = ["Malene Trab <malene@trab.dk>"]
 packages = [{ include = "pydanfossally" }]
 version = "0.0.0"
 
