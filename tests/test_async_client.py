@@ -520,7 +520,6 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("requests./ally/devices=1", log_output)
         self.assertIn("unsupported_status_device_count=0", log_output)
         self.assertIn("unsupported_status_devices=none", log_output)
-        self.assertIn("skipped_write_calls=0", log_output)
 
     async def test_refresh_device_uses_status_endpoint_when_supported(self) -> None:
         """High-priority devices should prefer the status endpoint."""
@@ -977,10 +976,12 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await ally.set_temperature("device-1", 22.0, code="temp_set"))
 
-    async def test_set_temperature_skips_write_when_cached_value_matches(self) -> None:
-        """Identical cached setpoints should not trigger a redundant API write."""
+    async def test_set_temperature_still_writes_when_cached_value_matches(self) -> None:
+        """Explicit temperature writes should still reach the API even if cache matches."""
+        command_calls = 0
 
         def handler(request: MockRequest) -> MockResponse:
+            nonlocal command_calls
             if request.url.path == "/oauth2/token":
                 return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
@@ -989,9 +990,13 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                     json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
                 )
             if request.url.path == "/ally/devices/device-1/commands":
-                raise AssertionError(
-                    "No command request expected for unchanged setpoint"
+                command_calls += 1
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {"commands": [{"code": "manual_mode_fast", "value": 215}]},
                 )
+                return MockResponse(201, json_data={"result": True, "t": 16})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -1001,34 +1006,12 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             await ally.set_temperature("device-1", 21.5, code="manual_mode_fast")
         )
+        self.assertEqual(command_calls, 1)
 
-    async def test_set_temperature_for_mode_skips_mode_and_setpoint_when_unchanged(
+    async def test_set_temperature_for_mode_still_writes_when_cache_matches(
         self,
     ) -> None:
-        """Mode-aware writes should short-circuit when cached mode and setpoint match."""
-
-        def handler(request: MockRequest) -> MockResponse:
-            if request.url.path == "/oauth2/token":
-                return MockResponse(200, json_data=TOKEN_RESPONSE)
-            if request.url.path == "/ally/devices":
-                return MockResponse(
-                    200,
-                    json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
-                )
-            if request.url.path == "/ally/devices/device-1/commands":
-                raise AssertionError(
-                    "No command request expected for unchanged mode write"
-                )
-            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-        ally = DanfossAlly(api=await self._make_api(handler))
-        await ally.initialize("key", "secret")
-        await ally.get_devices()
-
-        self.assertTrue(await ally.set_temperature_for_mode("device-1", 21.5, "manual"))
-
-    async def test_set_temperature_for_mode_only_sends_changed_portion(self) -> None:
-        """Mode-aware writes may skip the separate mode call and still send setpoint changes."""
+        """Mode-aware writes should still send mode and setpoint when explicitly requested."""
         command_payloads: list[dict[str, object]] = []
 
         def handler(request: MockRequest) -> MockResponse:
@@ -1042,11 +1025,44 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/ally/devices/device-1/commands":
                 payload = json.loads(request.content.decode())
                 command_payloads.append(payload)
-                self.assertEqual(
-                    payload,
-                    {"commands": [{"code": "manual_mode_fast", "value": 230}]},
+                return MockResponse(201, json_data={"result": True, "t": 17})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        self.assertTrue(await ally.set_temperature_for_mode("device-1", 21.5, "manual"))
+        self.assertEqual(
+            command_payloads,
+            [
+                {"commands": [{"code": "mode", "value": "manual"}]},
+                {"commands": [{"code": "manual_mode_fast", "value": 215}]},
+            ],
+        )
+
+    async def test_set_temperature_for_mode_sends_full_explicit_flow(self) -> None:
+        """Mode-aware writes should send both calls even if cached mode already matches."""
+        command_payloads: list[dict[str, object]] = []
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(
+                    200,
+                    json_data={"result": [THERMOSTAT_WITH_MODE_SETPOINTS], "t": 1},
                 )
-                return MockResponse(201, json_data={"result": True, "t": 7})
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                command_payloads.append(payload)
+                if payload == {"commands": [{"code": "mode", "value": "manual"}]}:
+                    return MockResponse(201, json_data={"result": True, "t": 6})
+                if payload == {
+                    "commands": [{"code": "manual_mode_fast", "value": 230}]
+                }:
+                    return MockResponse(201, json_data={"result": True, "t": 7})
+                raise AssertionError(f"Unexpected command payload: {payload}")
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -1054,7 +1070,13 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.get_devices()
 
         self.assertTrue(await ally.set_temperature_for_mode("device-1", 23.0, "manual"))
-        self.assertEqual(len(command_payloads), 1)
+        self.assertEqual(
+            command_payloads,
+            [
+                {"commands": [{"code": "mode", "value": "manual"}]},
+                {"commands": [{"code": "manual_mode_fast", "value": 230}]},
+            ],
+        )
 
     async def test_set_temperature_for_mode_sets_mode_before_mode_setpoint(
         self,
@@ -1140,10 +1162,10 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await ally.set_external_temperature("device-1", 25.0))
 
-    async def test_set_external_temperature_skips_write_when_cached_state_matches(
+    async def test_set_external_temperature_still_writes_when_cached_state_matches(
         self,
     ) -> None:
-        """External temperature writes should be skipped when cached values already match."""
+        """Explicit external temperature writes should still reach the API if cache matches."""
         cached_device = {
             **DEVICE_PAYLOAD,
             "status": [
@@ -1159,9 +1181,18 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path == "/ally/devices":
                 return MockResponse(200, json_data={"result": [cached_device], "t": 1})
             if request.url.path == "/ally/devices/device-1/commands":
-                raise AssertionError(
-                    "No command request expected for unchanged external temperature"
+                payload = json.loads(request.content.decode())
+                self.assertEqual(
+                    payload,
+                    {
+                        "commands": [
+                            {"code": "radiator_covered", "value": True},
+                            {"code": "ext_measured_rs", "value": 2500},
+                            {"code": "sensor_avg_temp", "value": 250},
+                        ]
+                    },
                 )
+                return MockResponse(201, json_data={"result": True, "t": 18})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -1209,10 +1240,10 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await ally.set_external_temperature("device-1", 25.0))
 
-    async def test_diagnostics_track_skipped_write_calls_and_unsupported_status(
+    async def test_diagnostics_track_unsupported_status(
         self,
     ) -> None:
-        """Wrapper diagnostics should expose skipped writes and unsupported status devices."""
+        """Wrapper diagnostics should expose unsupported status devices."""
 
         def handler(request: MockRequest) -> MockResponse:
             if request.url.path == "/oauth2/token":
@@ -1228,6 +1259,8 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                     200,
                     json_data={"result": ROOM_SENSOR_PAYLOAD, "t": 15},
                 )
+            if request.url.path == "/ally/devices/device-1/commands":
+                return MockResponse(201, json_data={"result": True, "t": 16})
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(api=await self._make_api(handler))
@@ -1240,7 +1273,6 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         diagnostics = ally.get_diagnostics()
 
-        self.assertEqual(diagnostics["skipped_write_calls"], 1)
         self.assertEqual(diagnostics["unsupported_status_device_count"], 1)
         self.assertEqual(diagnostics["unsupported_status_devices"], ["sensor-1"])
 

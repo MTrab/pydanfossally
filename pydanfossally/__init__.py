@@ -145,15 +145,6 @@ def _normalize_device_type(value: Any) -> str:
     return " ".join(normalized.split())
 
 
-def _values_match(current: Any, expected: Any) -> bool:
-    """Compare cached and desired values with light numeric tolerance."""
-    if isinstance(current, bool) or isinstance(expected, bool):
-        return current is expected
-    if isinstance(current, (int, float)) and isinstance(expected, (int, float)):
-        return abs(float(current) - float(expected)) < 0.001
-    return current == expected
-
-
 class DanfossAlly:
     """Async-first Danfoss Ally API connector."""
 
@@ -198,7 +189,6 @@ class DanfossAlly:
         self._status_refresh_unsupported: dict[str, float] = {}
         self._skipped_refresh_times: dict[str, deque[float]] = defaultdict(deque)
         self._degraded_mode_entry_times: deque[float] = deque()
-        self._skipped_write_times: deque[float] = deque()
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -502,15 +492,6 @@ class DanfossAlly:
 
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
-        device = self.devices.get(device_id)
-        if device and self._cached_command_matches(device, "mode", mode):
-            self._record_timestamp(self._skipped_write_times)
-            _LOGGER.debug(
-                "Skipping mode update for device %s because cached mode already matches %s",
-                device_id,
-                mode,
-            )
-            return True
         _LOGGER.debug("Setting mode for device %s to %s", device_id, mode)
         return await self._api.set_mode(device_id, mode)
 
@@ -520,14 +501,6 @@ class DanfossAlly:
         listofcommands: list[tuple[str, Any]],
     ) -> bool:
         """Send generic commands for one device."""
-        if self._should_skip_cached_command_call(device_id, listofcommands):
-            self._record_timestamp(self._skipped_write_times)
-            _LOGGER.debug(
-                "Skipping command(s) for device %s because cached state already matches",
-                device_id,
-            )
-            return True
-
         _LOGGER.debug(
             "Sending generic command(s) for device %s with codes=%s",
             device_id,
@@ -565,53 +538,6 @@ class DanfossAlly:
             for device_id in self.devices
             if self._is_high_priority_device(device_id)
         ]
-
-    def _should_skip_cached_command_call(
-        self,
-        device_id: str,
-        commands: list[tuple[str, Any]],
-    ) -> bool:
-        """Return whether all commands already match the cached device state."""
-        device = self.devices.get(device_id)
-        if not device:
-            return False
-        for code, value in commands:
-            if not self._cached_command_matches(device, code, value):
-                return False
-        for code, value in commands:
-            _LOGGER.debug(
-                "Skipping command %s for device %s because cached value already matches %s",
-                code,
-                device_id,
-                value,
-            )
-        return True
-
-    def _cached_command_matches(
-        self,
-        device: dict[str, Any],
-        code: str,
-        value: Any,
-    ) -> bool:
-        """Return whether a command already matches the cached parsed state."""
-        expected_key = code.lower()
-        expected_value = value
-
-        if code in SETPOINT_CODES:
-            expected_value = float(value) / 10
-        elif code in BOOLEAN_CODES:
-            expected_value = _normalize_bool(value)
-        elif code == "ext_measured_rs":
-            expected_value = float(value) / 100
-        elif code == "sensor_avg_temp":
-            expected_key = "external_sensor_temperature"
-            expected_value = float(value) / 10
-        elif code != "mode":
-            return False
-
-        if expected_value is None or expected_key not in device:
-            return False
-        return _values_match(device[expected_key], expected_value)
 
     def _record_skipped_refresh(self, reason: str, count: int = 1) -> None:
         """Count refreshes that were skipped by policy or cooldown."""
@@ -723,7 +649,6 @@ class DanfossAlly:
                 skipped_refreshes[reason] = len(timestamps)
 
         self._prune_timestamps(self._degraded_mode_entry_times)
-        self._prune_timestamps(self._skipped_write_times)
 
         cutoff = time.monotonic() - self._diagnostic_window
         unsupported_status_devices = sorted(
@@ -737,7 +662,6 @@ class DanfossAlly:
             "degraded_mode_entries": len(self._degraded_mode_entry_times),
             "unsupported_status_devices": unsupported_status_devices,
             "unsupported_status_device_count": len(unsupported_status_devices),
-            "skipped_write_calls": len(self._skipped_write_times),
         }
 
     def _log_diagnostics(self, context: str) -> None:
@@ -763,8 +687,4 @@ class DanfossAlly:
         _LOGGER.debug(
             "  unsupported_status_devices=%s",
             ", ".join(diagnostics["unsupported_status_devices"]) or "none",
-        )
-        _LOGGER.debug(
-            "  skipped_write_calls=%s",
-            diagnostics["skipped_write_calls"],
         )
