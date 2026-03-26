@@ -6,7 +6,7 @@ import asyncio
 import copy
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from yarl import URL
 
@@ -651,7 +651,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_refresh_devices_limits_parallelism_to_five(self) -> None:
-        """Cached device refreshes should use bounded parallelism."""
+        """Pending hot refreshes should use bounded parallelism."""
         ally = DanfossAlly(
             api=await self._make_api(lambda request: MockResponse(200)),
             refresh_device_concurrency=5,
@@ -665,11 +665,15 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                     name=f" Thermostat {idx} ",
                 )
             )
+            ally._pending_hot_refresh[f"device-{idx}"] = {  # type: ignore[attr-defined]
+                "baseline": {},
+                "deadline": float("inf"),
+            }
 
         active_calls = 0
         max_active_calls = 0
 
-        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+        async def fake_refresh_device_status(device_id: str) -> dict[str, object]:
             nonlocal active_calls, max_active_calls
             active_calls += 1
             max_active_calls = max(max_active_calls, active_calls)
@@ -677,14 +681,15 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             active_calls -= 1
             return {"id": device_id}
 
-        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+        ally.refresh_device_status = fake_refresh_device_status  # type: ignore[method-assign]
+        ally.get_devices = AsyncMock(return_value=ally.devices)  # type: ignore[method-assign]
 
         await ally.refresh_devices()
 
         self.assertEqual(max_active_calls, 5)
 
     async def test_refresh_devices_rate_limits_device_reads(self) -> None:
-        """Cached device refreshes should be paced to avoid request bursts."""
+        """Pending hot refreshes should be paced to avoid request bursts."""
         ally = DanfossAlly(
             api=await self._make_api(lambda request: MockResponse(200)),
             refresh_device_min_interval=0.02,
@@ -697,14 +702,19 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                     name=f" Thermostat {idx} ",
                 )
             )
+            ally._pending_hot_refresh[f"device-{idx}"] = {  # type: ignore[attr-defined]
+                "baseline": {},
+                "deadline": float("inf"),
+            }
 
         started_at: list[float] = []
 
-        async def fake_refresh_device(device_id: str) -> dict[str, object]:
+        async def fake_refresh_device_status(device_id: str) -> dict[str, object]:
             started_at.append(asyncio.get_running_loop().time())
             return {"id": device_id}
 
-        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+        ally.refresh_device_status = fake_refresh_device_status  # type: ignore[method-assign]
+        ally.get_devices = AsyncMock(return_value=ally.devices)  # type: ignore[method-assign]
 
         await ally.refresh_devices()
 
@@ -729,8 +739,62 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("device-1", devices)
 
-    async def test_refresh_devices_skips_bulk_discovery_before_interval(self) -> None:
-        """Known devices should use direct refresh until the discovery interval elapses."""
+    async def test_refresh_devices_always_runs_bulk_snapshot(self) -> None:
+        """Each refresh should always execute one bulk /devices request."""
+        bulk_calls = 0
+
+        def handler(request: MockRequest) -> MockResponse:
+            nonlocal bulk_calls
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                bulk_calls += 1
+                return MockResponse(
+                    200, json_data={"result": [DEVICE_PAYLOAD], "t": bulk_calls}
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(
+            api=await self._make_api(handler), refresh_device_min_interval=0
+        )
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+
+        await ally.refresh_devices()
+
+        self.assertEqual(bulk_calls, 2)
+
+    async def test_refresh_devices_runs_hot_refresh_for_pending_writes(self) -> None:
+        """Refresh should run /status for devices with pending writes."""
+        status_calls: list[str] = []
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+            if request.url.path == "/ally/devices/device-1/commands":
+                return MockResponse(201, json_data={"result": True, "t": 2})
+            if request.url.path == "/ally/devices/device-1/status":
+                status_calls.append("device-1")
+                return MockResponse(
+                    200, json_data={"result": DEVICE_PAYLOAD["status"], "t": 3}
+                )
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(
+            api=await self._make_api(handler), refresh_device_min_interval=0
+        )
+        await ally.initialize("key", "secret")
+        await ally.get_devices()
+        await ally.send_command("device-1", [("temp_set", 220)])
+
+        await ally.refresh_devices()
+
+        self.assertEqual(status_calls, ["device-1"])
+
+    async def test_refresh_devices_stops_hot_refresh_when_bulk_changes(self) -> None:
+        """Pending hot refresh should stop once bulk data shows a changed device state."""
         bulk_calls = 0
         status_calls = 0
 
@@ -740,117 +804,31 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
                 return MockResponse(200, json_data=TOKEN_RESPONSE)
             if request.url.path == "/ally/devices":
                 bulk_calls += 1
-                return MockResponse(200, json_data={"result": [DEVICE_PAYLOAD], "t": 1})
+                payload = clone_device_payload(DEVICE_PAYLOAD)
+                if bulk_calls >= 2:
+                    payload["status"][0]["value"] = 230
+                return MockResponse(
+                    200, json_data={"result": [payload], "t": bulk_calls}
+                )
+            if request.url.path == "/ally/devices/device-1/commands":
+                return MockResponse(201, json_data={"result": True, "t": 2})
             if request.url.path == "/ally/devices/device-1/status":
                 status_calls += 1
                 return MockResponse(
-                    200,
-                    json_data={
-                        "result": [
-                            {"code": "temp_set", "value": 230},
-                            {"code": "temp_current", "value": 205},
-                        ],
-                        "t": 2,
-                    },
+                    200, json_data={"result": DEVICE_PAYLOAD["status"], "t": 3}
                 )
             raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
         ally = DanfossAlly(
-            api=await self._make_api(handler),
-            refresh_device_min_interval=0,
-            device_discovery_interval=3600,
+            api=await self._make_api(handler), refresh_device_min_interval=0
         )
         await ally.initialize("key", "secret")
         await ally.get_devices()
+        await ally.send_command("device-1", [("temp_set", 220)])
 
         await ally.refresh_devices()
 
-        self.assertEqual(bulk_calls, 1)
-        self.assertEqual(status_calls, 1)
-
-    async def test_refresh_devices_renews_bulk_discovery_after_interval(self) -> None:
-        """Hourly discovery should pick up new devices before direct refresh."""
-        bulk_calls = 0
-        status_calls: list[str] = []
-        second_device = clone_device_payload(
-            DEVICE_PAYLOAD,
-            device_id="device-2",
-            name=" Bedroom ",
-        )
-
-        def handler(request: MockRequest) -> MockResponse:
-            nonlocal bulk_calls
-            if request.url.path == "/oauth2/token":
-                return MockResponse(200, json_data=TOKEN_RESPONSE)
-            if request.url.path == "/ally/devices":
-                bulk_calls += 1
-                if bulk_calls == 1:
-                    return MockResponse(
-                        200, json_data={"result": [DEVICE_PAYLOAD], "t": 1}
-                    )
-                return MockResponse(
-                    200,
-                    json_data={"result": [DEVICE_PAYLOAD, second_device], "t": 2},
-                )
-            if request.url.path.endswith("/status"):
-                device_id = request.url.path.split("/")[-2]
-                status_calls.append(device_id)
-                payload = DEVICE_PAYLOAD if device_id == "device-1" else second_device
-                return MockResponse(
-                    200, json_data={"result": payload["status"], "t": 3}
-                )
-            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-        ally = DanfossAlly(
-            api=await self._make_api(handler),
-            refresh_device_min_interval=0,
-            device_discovery_interval=3600,
-        )
-        await ally.initialize("key", "secret")
-        await ally.get_devices()
-        ally._next_device_discovery_at = asyncio.get_running_loop().time() - 1
-
-        devices = await ally.refresh_devices()
-
-        self.assertEqual(bulk_calls, 2)
-        self.assertCountEqual(status_calls, ["device-1", "device-2"])
-        self.assertIn("device-2", devices)
-
-    async def test_refresh_devices_leaves_low_priority_devices_on_bulk_only(
-        self,
-    ) -> None:
-        """Gateways and similar devices should not use per-device refreshes."""
-        status_calls: list[str] = []
-
-        def handler(request: MockRequest) -> MockResponse:
-            if request.url.path == "/oauth2/token":
-                return MockResponse(200, json_data=TOKEN_RESPONSE)
-            if request.url.path == "/ally/devices":
-                return MockResponse(
-                    200,
-                    json_data={"result": [DEVICE_PAYLOAD, GATEWAY_PAYLOAD], "t": 1},
-                )
-            if request.url.path == "/ally/devices/device-1/status":
-                status_calls.append("device-1")
-                return MockResponse(
-                    200,
-                    json_data={"result": DEVICE_PAYLOAD["status"], "t": 2},
-                )
-            if request.url.path.startswith("/ally/devices/gateway-1"):
-                raise AssertionError("Gateway should remain bulk-only")
-            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-        ally = DanfossAlly(
-            api=await self._make_api(handler),
-            refresh_device_min_interval=0,
-            device_discovery_interval=3600,
-        )
-        await ally.initialize("key", "secret")
-        await ally.get_devices()
-
-        await ally.refresh_devices()
-
-        self.assertEqual(status_calls, ["device-1"])
+        self.assertEqual(status_calls, 0)
 
     def test_known_low_priority_device_types_are_bulk_only(self) -> None:
         """Known infrastructure device types should stay out of high-priority refreshes."""
@@ -877,49 +855,29 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             DanfossAlly(degraded_refresh_cooldown=-0.1)
 
-    async def test_refresh_devices_enters_degraded_mode_on_rate_limit(self) -> None:
-        """429 during per-device refresh should trigger bulk-only cooldown and recovery."""
+        with self.assertRaises(ValueError):
+            DanfossAlly(hot_refresh_timeout=-0.1)
+
+    async def test_refresh_devices_stops_hot_refresh_on_timeout(self) -> None:
+        """Pending hot refresh should stop after the configured timeout."""
         ally = DanfossAlly(
             api=await self._make_api(lambda request: MockResponse(200)),
-            refresh_device_concurrency=1,
             refresh_device_min_interval=0,
-            degraded_refresh_cooldown=30,
+            hot_refresh_timeout=0,
         )
         ally._store_device(clone_device_payload(DEVICE_PAYLOAD, device_id="device-1"))  # type: ignore[attr-defined]
-        ally._store_device(clone_device_payload(DEVICE_PAYLOAD, device_id="device-2"))  # type: ignore[attr-defined]
+        ally._pending_hot_refresh["device-1"] = {  # type: ignore[attr-defined]
+            "baseline": ally.devices["device-1"].copy(),
+            "deadline": 0.0,
+        }
 
-        refreshed_ids: list[str] = []
-        attempts = 0
-
-        async def fake_refresh_device(device_id: str) -> dict[str, object]:
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                raise RateLimitError()
-            refreshed_ids.append(device_id)
-            return {"id": device_id}
-
-        ally.refresh_device = fake_refresh_device  # type: ignore[method-assign]
+        ally.get_devices = AsyncMock(return_value=ally.devices)  # type: ignore[method-assign]
+        ally.refresh_device_status = AsyncMock()  # type: ignore[method-assign]
 
         await ally.refresh_devices()
-        self.assertGreater(
-            ally._degraded_refresh_until,  # type: ignore[attr-defined]
-            asyncio.get_running_loop().time(),
-        )
 
-        await ally.refresh_devices()
-        self.assertEqual(refreshed_ids, [])
-
-        ally._degraded_refresh_until = asyncio.get_running_loop().time() - 1  # type: ignore[attr-defined]
-        await ally.refresh_devices()
-        self.assertEqual(refreshed_ids, ["device-1"])
-
-        await ally.refresh_devices()
-        self.assertCountEqual(refreshed_ids, ["device-1", "device-1", "device-2"])
-
-        diagnostics = ally.get_diagnostics()
-        self.assertEqual(diagnostics["degraded_mode_entries"], 1)
-        self.assertEqual(diagnostics["skipped_refreshes"]["degraded_mode"], 2)
+        ally.refresh_device_status.assert_not_called()  # type: ignore[attr-defined]
+        self.assertEqual(ally._pending_hot_refresh, {})  # type: ignore[attr-defined]
 
     async def test_global_rate_limit_paces_reads_and_writes(self) -> None:
         """All outbound API calls should share the same global pacing."""

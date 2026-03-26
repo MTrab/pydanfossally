@@ -25,7 +25,7 @@ from .danfossallyapi import (
     DIAGNOSTIC_WINDOW_SECONDS,
     DanfossAllyAPI,
 )
-from .exceptions import InternalServerError, RateLimitError
+from .exceptions import InternalServerError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,6 +156,7 @@ class DanfossAlly:
         refresh_device_min_interval: float = REFRESH_DEVICE_MIN_INTERVAL,
         device_discovery_interval: float = DEVICE_DISCOVERY_INTERVAL,
         degraded_refresh_cooldown: float = DEGRADED_REFRESH_COOLDOWN,
+        hot_refresh_timeout: float = 300.0,
         user_agent_prefix: str | None = None,
     ) -> None:
         """Initialize the connector."""
@@ -167,6 +168,8 @@ class DanfossAlly:
             raise ValueError("device_discovery_interval must be non-negative")
         if degraded_refresh_cooldown < 0:
             raise ValueError("degraded_refresh_cooldown must be non-negative")
+        if hot_refresh_timeout < 0:
+            raise ValueError("hot_refresh_timeout must be non-negative")
 
         self._authorized = False
         self._token: str | None = None
@@ -180,6 +183,7 @@ class DanfossAlly:
         self._refresh_device_min_interval = refresh_device_min_interval
         self._device_discovery_interval = device_discovery_interval
         self._degraded_refresh_cooldown = degraded_refresh_cooldown
+        self._hot_refresh_timeout = hot_refresh_timeout
         self._diagnostic_window = DIAGNOSTIC_WINDOW_SECONDS
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
@@ -187,6 +191,7 @@ class DanfossAlly:
         self._degraded_refresh_until = 0.0
         self._status_refresh_recovery_limit: int | None = None
         self._status_refresh_unsupported: dict[str, float] = {}
+        self._pending_hot_refresh: dict[str, dict[str, Any]] = {}
         self._skipped_refresh_times: dict[str, deque[float]] = defaultdict(deque)
         self._degraded_mode_entry_times: deque[float] = deque()
 
@@ -340,64 +345,36 @@ class DanfossAlly:
             await asyncio.sleep(delay)
 
     async def refresh_devices(self) -> dict[str, dict[str, Any]]:
-        """Refresh cached devices with hybrid bulk and per-device reads."""
+        """Refresh cached devices with bulk snapshots and pending-write hot refreshes."""
         if not self.devices:
             _LOGGER.debug(
                 "Refresh requested without cached devices; loading bulk snapshot for discovery",
             )
             return await self.get_devices()
 
-        if self._should_refresh_device_discovery():
-            _LOGGER.debug(
-                "Device discovery interval elapsed; refreshing bulk device snapshot"
-            )
-            await self.get_devices()
+        await self.get_devices()
+        self._prune_pending_hot_refreshes()
 
-        device_ids = self._get_high_priority_refresh_candidates()
+        device_ids = [
+            device_id
+            for device_id in self._pending_hot_refresh
+            if device_id in self._device_metadata
+            and device_id not in self._status_refresh_unsupported
+        ]
         if not device_ids:
-            self._record_skipped_refresh("no_high_priority_candidates")
-            _LOGGER.debug("No high-priority devices eligible for per-device refresh")
             return self.devices
-
-        if self._is_degraded_refresh_active():
-            self._record_skipped_refresh("degraded_mode", len(device_ids))
-            _LOGGER.debug(
-                "Per-device refreshes are in cooldown until %.3f; returning bulk-backed cache only",
-                self._degraded_refresh_until,
-            )
-            return self.devices
-
-        recovery_limit = self._status_refresh_recovery_limit
-        if recovery_limit is not None:
-            device_ids = device_ids[:recovery_limit]
 
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
-        rate_limited = False
 
         async def refresh_one(device_id: str) -> None:
-            nonlocal rate_limited
             async with semaphore:
-                if rate_limited:
-                    self._record_skipped_refresh("rate_limited_remainder")
-                    return
                 await self._wait_for_refresh_slot()
                 try:
-                    await self.refresh_device(device_id)
-                except RateLimitError:
-                    rate_limited = True
-                    self._enter_degraded_refresh_mode()
+                    await self.refresh_device_status(device_id)
+                except InternalServerError:
+                    self._status_refresh_unsupported[device_id] = time.monotonic()
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
-
-        if not rate_limited:
-            self._advance_status_refresh_recovery(
-                len(self._get_high_priority_refresh_candidates())
-            )
-
-        _LOGGER.debug(
-            "Refreshed %s high-priority device(s) via hybrid endpoint selection",
-            len(device_ids),
-        )
         return self.devices
 
     def _should_refresh_device_discovery(self) -> bool:
@@ -493,7 +470,10 @@ class DanfossAlly:
     async def set_mode(self, device_id: str, mode: str) -> bool:
         """Update operating mode for one device."""
         _LOGGER.debug("Setting mode for device %s to %s", device_id, mode)
-        return await self._api.set_mode(device_id, mode)
+        result = await self._api.set_mode(device_id, mode)
+        if result:
+            self._mark_pending_hot_refresh(device_id)
+        return result
 
     async def send_command(
         self,
@@ -506,7 +486,10 @@ class DanfossAlly:
             device_id,
             [code for code, _ in listofcommands],
         )
-        return await self._api.send_command(device_id, listofcommands)
+        result = await self._api.send_command(device_id, listofcommands)
+        if result:
+            self._mark_pending_hot_refresh(device_id)
+        return result
 
     def _store_device(
         self,
@@ -622,6 +605,27 @@ class DanfossAlly:
             total_candidates,
             self._status_refresh_recovery_limit * 2,
         )
+
+    def _mark_pending_hot_refresh(self, device_id: str) -> None:
+        """Track a device for status hot refresh after a successful write."""
+        self._pending_hot_refresh[device_id] = {
+            "baseline": self.devices.get(device_id, {}).copy(),
+            "deadline": time.monotonic() + self._hot_refresh_timeout,
+        }
+
+    def _prune_pending_hot_refreshes(self) -> None:
+        """Stop hot refresh when bulk data changed or timeout has passed."""
+        now = time.monotonic()
+        completed: list[str] = []
+        for device_id, state in self._pending_hot_refresh.items():
+            if now >= state["deadline"]:
+                completed.append(device_id)
+                continue
+            if self.devices.get(device_id) != state.get("baseline", {}):
+                completed.append(device_id)
+
+        for device_id in completed:
+            self._pending_hot_refresh.pop(device_id, None)
 
     def _get_setpoint_code_for_mode(self, device: dict[str, Any], mode: str) -> str:
         """Resolve the Danfoss setpoint field for one mode."""
