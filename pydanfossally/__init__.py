@@ -621,7 +621,13 @@ class DanfossAlly:
             if now >= state["deadline"]:
                 completed.append(device_id)
                 continue
-            if self.devices.get(device_id) != state.get("baseline", {}):
+
+            baseline = state.get("baseline")
+            if isinstance(baseline, dict):
+                if baseline and self.devices.get(device_id) != baseline:
+                    completed.append(device_id)
+                    continue
+            elif baseline is not None and self.devices.get(device_id) != baseline:
                 completed.append(device_id)
 
         for device_id in completed:
