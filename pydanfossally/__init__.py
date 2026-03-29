@@ -354,6 +354,7 @@ class DanfossAlly:
             return await self.get_devices()
 
         await self.get_devices()
+        self._prune_pending_hot_refreshes()
 
         device_ids = [
             device_id
@@ -664,13 +665,10 @@ class DanfossAlly:
             if timestamps:
                 skipped_refreshes[reason] = len(timestamps)
 
-        self._prune_timestamps(self._degraded_mode_entry_times)
-
         pending_hot_refresh_devices = sorted(self._pending_hot_refresh)
         return {
             "request_counts": self._api.get_diagnostics()["request_counts"],
             "skipped_refreshes": dict(sorted(skipped_refreshes.items())),
-            "degraded_mode_entries": len(self._degraded_mode_entry_times),
             "pending_hot_refresh_devices": pending_hot_refresh_devices,
             "pending_hot_refresh_device_count": len(pending_hot_refresh_devices),
         }
@@ -687,10 +685,6 @@ class DanfossAlly:
             _LOGGER.debug("  requests.%s=%s", endpoint, count)
         for reason, count in diagnostics["skipped_refreshes"].items():
             _LOGGER.debug("  skipped_refreshes.%s=%s", reason, count)
-        _LOGGER.debug(
-            "  degraded_mode_entries=%s",
-            diagnostics["degraded_mode_entries"],
-        )
         _LOGGER.debug(
             "  pending_hot_refresh_device_count=%s",
             diagnostics["pending_hot_refresh_device_count"],
