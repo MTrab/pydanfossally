@@ -263,6 +263,7 @@ class DanfossAlly:
             self._store_device(device, last_response_time=bulk_response_time)
 
         self._schedule_next_device_discovery()
+        self._prune_pending_hot_refreshes()
 
         _LOGGER.debug(
             "Loaded %s devices from bulk snapshot with t=%s",
@@ -353,7 +354,6 @@ class DanfossAlly:
             return await self.get_devices()
 
         await self.get_devices()
-        self._prune_pending_hot_refreshes()
 
         device_ids = [
             device_id
@@ -364,11 +364,17 @@ class DanfossAlly:
         if not device_ids:
             return self.devices
 
+        _LOGGER.debug(
+            "Hot refresh polling %s pending device(s): %s",
+            len(device_ids),
+            ", ".join(device_ids),
+        )
         semaphore = asyncio.Semaphore(self._refresh_device_concurrency)
 
         async def refresh_one(device_id: str) -> None:
             async with semaphore:
                 await self._wait_for_refresh_slot()
+                _LOGGER.debug("Polling device %s via hot refresh", device_id)
                 try:
                     await self.refresh_device_status(device_id)
                 except InternalServerError:
@@ -660,18 +666,13 @@ class DanfossAlly:
 
         self._prune_timestamps(self._degraded_mode_entry_times)
 
-        cutoff = time.monotonic() - self._diagnostic_window
-        unsupported_status_devices = sorted(
-            device_id
-            for device_id, seen_at in self._status_refresh_unsupported.items()
-            if seen_at >= cutoff
-        )
+        pending_hot_refresh_devices = sorted(self._pending_hot_refresh)
         return {
             "request_counts": self._api.get_diagnostics()["request_counts"],
             "skipped_refreshes": dict(sorted(skipped_refreshes.items())),
             "degraded_mode_entries": len(self._degraded_mode_entry_times),
-            "unsupported_status_devices": unsupported_status_devices,
-            "unsupported_status_device_count": len(unsupported_status_devices),
+            "pending_hot_refresh_devices": pending_hot_refresh_devices,
+            "pending_hot_refresh_device_count": len(pending_hot_refresh_devices),
         }
 
     def _log_diagnostics(self, context: str) -> None:
@@ -691,10 +692,10 @@ class DanfossAlly:
             diagnostics["degraded_mode_entries"],
         )
         _LOGGER.debug(
-            "  unsupported_status_device_count=%s",
-            diagnostics["unsupported_status_device_count"],
+            "  pending_hot_refresh_device_count=%s",
+            diagnostics["pending_hot_refresh_device_count"],
         )
         _LOGGER.debug(
-            "  unsupported_status_devices=%s",
-            ", ".join(diagnostics["unsupported_status_devices"]) or "none",
+            "  pending_hot_refresh_devices=%s",
+            ", ".join(diagnostics["pending_hot_refresh_devices"]) or "none",
         )

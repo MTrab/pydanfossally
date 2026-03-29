@@ -518,8 +518,8 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             log_output,
         )
         self.assertIn("requests./ally/devices=1", log_output)
-        self.assertIn("unsupported_status_device_count=0", log_output)
-        self.assertIn("unsupported_status_devices=none", log_output)
+        self.assertIn("pending_hot_refresh_device_count=0", log_output)
+        self.assertIn("pending_hot_refresh_devices=none", log_output)
 
     async def test_refresh_device_uses_status_endpoint_when_supported(self) -> None:
         """High-priority devices should prefer the status endpoint."""
@@ -789,9 +789,13 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.get_devices()
         await ally.send_command("device-1", [("temp_set", 220)])
 
-        await ally.refresh_devices()
+        with self.assertLogs("pydanfossally", level="DEBUG") as captured_logs:
+            await ally.refresh_devices()
 
         self.assertEqual(status_calls, ["device-1"])
+        log_output = "\n".join(captured_logs.output)
+        self.assertIn("Hot refresh polling 1 pending device(s): device-1", log_output)
+        self.assertIn("Polling device device-1 via hot refresh", log_output)
 
     async def test_refresh_devices_stops_hot_refresh_when_bulk_changes(self) -> None:
         """Pending hot refresh should stop once bulk data shows a changed device state."""
@@ -1231,8 +1235,8 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         diagnostics = ally.get_diagnostics()
 
-        self.assertEqual(diagnostics["unsupported_status_device_count"], 1)
-        self.assertEqual(diagnostics["unsupported_status_devices"], ["sensor-1"])
+        self.assertEqual(diagnostics["pending_hot_refresh_device_count"], 1)
+        self.assertEqual(diagnostics["pending_hot_refresh_devices"], ["device-1"])
 
     async def test_set_radiator_covered_false_clears_external_temperature(self) -> None:
         """Disabling covered-radiator mode should clear external sensor values."""
