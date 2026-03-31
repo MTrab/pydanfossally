@@ -218,6 +218,11 @@ Observed raw status codes on the representative thermostat:
 
 - `manual_mode_fast`, `at_home_setting`, `leaving_home_setting`, `pause_setting`, `holiday_setting`,
   `temp_set`, and `mode` are backed by live evidence on the tested device types.
+- `upper_temp` and `lower_temp` are also backed by live evidence on both tested thermostat models.
+- the library now exposes explicit write helpers for `upper_temp`, `lower_temp`,
+  `at_home_setting`, `leaving_home_setting`, and `holiday_setting`.
+- these values already map into the parsed device state, so read access can continue to use the
+  normal device object rather than dedicated getter methods.
 - `ext_measured_rs` is backed by live evidence on the Ally radiator thermostat and is a valid basis
   for `set_external_temperature()`.
 - `upper_temp` and `lower_temp` are writable on both tested thermostat models, but there is not yet

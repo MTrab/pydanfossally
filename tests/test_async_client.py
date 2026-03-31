@@ -1098,6 +1098,60 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await ally.set_manual_temperature("device-1", 22.5))
 
+    async def test_temperature_setting_helpers_send_expected_payloads(self) -> None:
+        """Bounded temperature helpers should write the matching command code."""
+        expected_payloads = [
+            {"commands": [{"code": "upper_temp", "value": 350}]},
+            {"commands": [{"code": "lower_temp", "value": 50}]},
+            {"commands": [{"code": "at_home_setting", "value": 215}]},
+            {"commands": [{"code": "leaving_home_setting", "value": 170}]},
+            {"commands": [{"code": "holiday_setting", "value": 150}]},
+        ]
+        command_payloads: list[dict[str, object]] = []
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices/device-1/commands":
+                payload = json.loads(request.content.decode())
+                command_payloads.append(payload)
+                return MockResponse(201, json_data={"result": True, "t": 19})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        self.assertTrue(await ally.set_upper_temp("device-1", 35.0))
+        self.assertTrue(await ally.set_lower_temp("device-1", 5.0))
+        self.assertTrue(await ally.set_at_home_setting("device-1", 21.5))
+        self.assertTrue(await ally.set_leaving_home_setting("device-1", 17.0))
+        self.assertTrue(await ally.set_holiday_setting("device-1", 15.0))
+        self.assertEqual(command_payloads, expected_payloads)
+
+    async def test_temperature_setting_helpers_validate_range_and_step(self) -> None:
+        """Bounded temperature helpers should reject invalid range and step values."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        invalid_calls = [
+            (ally.set_upper_temp, 4.5, "between 5.0 and 35.0"),
+            (ally.set_lower_temp, 35.5, "between 5.0 and 35.0"),
+            (ally.set_at_home_setting, 21.3, "0.5 degree steps"),
+            (ally.set_leaving_home_setting, 17.1, "0.5 degree steps"),
+            (ally.set_holiday_setting, 15.25, "0.5 degree steps"),
+        ]
+
+        for method, value, message in invalid_calls:
+            with self.subTest(method=method.__name__, value=value):
+                with self.assertRaisesRegex(ValueError, message):
+                    await method("device-1", value)
+
     async def test_set_external_temperature_enables_radiator_covered(self) -> None:
         """External temperature writes should force covered-radiator mode."""
 
