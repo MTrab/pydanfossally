@@ -1100,6 +1100,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             {"commands": [{"code": "at_home_setting", "value": 215}]},
             {"commands": [{"code": "leaving_home_setting", "value": 170}]},
             {"commands": [{"code": "holiday_setting", "value": 150}]},
+            {"commands": [{"code": "pause_setting", "value": 80}]},
         ]
         command_payloads: list[dict[str, object]] = []
 
@@ -1120,6 +1121,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await ally.set_at_home_setting("device-1", 21.5))
         self.assertTrue(await ally.set_leaving_home_setting("device-1", 17.0))
         self.assertTrue(await ally.set_holiday_setting("device-1", 15.0))
+        self.assertTrue(await ally.set_pause_setting("device-1", 8.0))
         self.assertEqual(command_payloads, expected_payloads)
 
     async def test_temperature_setting_helpers_validate_range_and_step(self) -> None:
@@ -1139,6 +1141,7 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             (ally.set_at_home_setting, 21.3, "0.5 degree steps"),
             (ally.set_leaving_home_setting, 17.1, "0.5 degree steps"),
             (ally.set_holiday_setting, 15.25, "0.5 degree steps"),
+            (ally.set_pause_setting, 4.0, "between 5.0 and 35.0"),
         ]
 
         for method, value, message in invalid_calls:
