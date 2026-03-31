@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -143,6 +144,18 @@ def _normalize_device_type(value: Any) -> str:
         return ""
     normalized = re.sub(r"[^a-z0-9]+", " ", value.lower())
     return " ".join(normalized.split())
+
+
+def _encode_half_degree_temperature_setting(temp: float) -> int:
+    """Encode a bounded temperature setting to Danfoss tenth-degree scale."""
+    if not 5.0 <= temp <= 35.0:
+        raise ValueError("temperature setting must be between 5.0 and 35.0")
+
+    half_steps = temp * 2
+    if not math.isclose(half_steps, round(half_steps), abs_tol=1e-9):
+        raise ValueError("temperature setting must use 0.5 degree steps")
+
+    return int(round(temp * 10))
 
 
 class DanfossAlly:
@@ -460,6 +473,42 @@ class DanfossAlly:
     async def set_manual_temperature(self, device_id: str, temp: float) -> bool:
         """Apply a manual temperature override for one device."""
         return await self.set_temperature_for_mode(device_id, temp, "manual")
+
+    async def _set_temperature_setting(
+        self,
+        device_id: str,
+        temp: float,
+        code: str,
+    ) -> bool:
+        """Write one bounded half-degree temperature-like setting."""
+        return await self.send_command(
+            device_id,
+            [(code, _encode_half_degree_temperature_setting(temp))],
+        )
+
+    async def set_upper_temp(self, device_id: str, temp: float) -> bool:
+        """Set the upper temperature limit for one device."""
+        return await self._set_temperature_setting(device_id, temp, "upper_temp")
+
+    async def set_lower_temp(self, device_id: str, temp: float) -> bool:
+        """Set the lower temperature limit for one device."""
+        return await self._set_temperature_setting(device_id, temp, "lower_temp")
+
+    async def set_at_home_setting(self, device_id: str, temp: float) -> bool:
+        """Set the at-home schedule temperature for one device."""
+        return await self._set_temperature_setting(device_id, temp, "at_home_setting")
+
+    async def set_leaving_home_setting(self, device_id: str, temp: float) -> bool:
+        """Set the leaving-home schedule temperature for one device."""
+        return await self._set_temperature_setting(
+            device_id,
+            temp,
+            "leaving_home_setting",
+        )
+
+    async def set_holiday_setting(self, device_id: str, temp: float) -> bool:
+        """Set the holiday schedule temperature for one device."""
+        return await self._set_temperature_setting(device_id, temp, "holiday_setting")
 
     async def set_external_temperature(
         self,

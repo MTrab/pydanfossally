@@ -142,6 +142,22 @@ By default, the client sends a `User-Agent` header in the form `pydanfossally/<v
 Integrations can prepend their own identifier through `user_agent_prefix`, resulting in a final
 header such as `HomeAssistant-DanfossAlly/2026.3.0 pydanfossally/<version>`.
 
+## Writable temperature helpers
+
+The client includes explicit helpers for several writable temperature-like settings:
+
+- `set_upper_temp(device_id, temp)`
+- `set_lower_temp(device_id, temp)`
+- `set_at_home_setting(device_id, temp)`
+- `set_leaving_home_setting(device_id, temp)`
+- `set_holiday_setting(device_id, temp)`
+
+These helpers validate values before writing them:
+
+- minimum `5.0`
+- maximum `35.0`
+- only `0.5` degree steps
+
 ## Local verification
 
 The repository includes `example.py` as a small async read-only example that uses credentials
