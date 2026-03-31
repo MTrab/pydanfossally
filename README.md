@@ -39,6 +39,7 @@ ally = DanfossAlly(
     refresh_device_min_interval=0.10,
     device_discovery_interval=600,
     degraded_refresh_cooldown=600,
+    hot_refresh_timeout=300,
     user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
 )
 
@@ -71,6 +72,7 @@ async def main() -> None:
         refresh_device_min_interval=0.10,
         device_discovery_interval=600,
         degraded_refresh_cooldown=600,
+        hot_refresh_timeout=300,
         user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
     ) as ally:
         authorized = await ally.initialize(os.environ["KEY"], os.environ["SECRET"])
@@ -116,25 +118,23 @@ device-specific status or command codes. That means:
 
 ## Refresh behavior
 
-The library uses a hybrid refresh strategy. Bulk reads from `GET /ally/devices` populate the
-cache, refresh low-priority devices such as gateways, and run again every 10 minutes to keep
-discovery current. High-priority devices such as thermostats and room sensors prefer the
-lighter `GET /ally/devices/{device_id}/status` endpoint, and the returned statuses are merged
-with cached metadata before parsing.
+Each `refresh_devices()` call always starts with a bulk read from `GET /ally/devices`.
 
-If the API responds with HTTP 429 during per-device refreshes, the client enters a temporary
-bulk-only cooldown. Once the cooldown expires, per-device refreshes resume gradually instead of
-all at once.
+After successful write operations (`set_mode(...)` and `send_command(...)`), the target device is
+tracked as pending hot refresh. While pending, `refresh_devices()` also calls
+`GET /ally/devices/{device_id}/status` for that device.
 
-Both knobs are configurable through `DanfossAlly(...)`:
+Hot refresh for a pending device stops when either of these conditions is met:
 
-- `refresh_device_concurrency` controls how many per-device refreshes may run at once
+- the latest bulk snapshot differs from the baseline state captured when the write succeeded
+- the hot refresh timeout is reached (default: 300 seconds / 5 minutes)
+
+The refresh tuning knobs are configurable through `DanfossAlly(...)`:
+
+- `refresh_device_concurrency` controls how many status hot refresh calls may run at once
 - `refresh_device_min_interval` controls the minimum delay in seconds between starting two
-  per-device refreshes
-- `device_discovery_interval` controls how often the bulk `/ally/devices` endpoint is used to
-  discover newly added devices and refresh low-priority ones
-- `degraded_refresh_cooldown` controls how long the client stays in bulk-only mode after a
-  per-device refresh is rate limited
+  status hot refresh calls
+- `hot_refresh_timeout` controls how long a device stays in pending hot refresh mode
 
 ## User-Agent
 
