@@ -158,6 +158,33 @@ These helpers validate values before writing them:
 - maximum `35.0`
 - only `0.5` degree steps
 
+Example:
+
+```python
+devices = await ally.get_devices()
+device = devices["device-1"]
+
+await ally.set_upper_temp("device-1", 28.0)
+await ally.set_lower_temp("device-1", 7.0)
+await ally.set_at_home_setting("device-1", 21.5)
+await ally.set_leaving_home_setting("device-1", 17.0)
+await ally.set_holiday_setting("device-1", 15.0)
+
+await ally.refresh_device("device-1")
+device = ally.devices["device-1"]
+
+print(device["upper_temp"])
+print(device["lower_temp"])
+print(device["at_home_setting"])
+print(device["leaving_home_setting"])
+print(device["holiday_setting"])
+```
+
+Read access for these values is exposed through the parsed device state returned by
+`get_devices()`, `get_device()`, `refresh_device()`, and `refresh_devices()`. The library does
+not currently include dedicated getter methods for these fields because they are already part of
+the normal device model.
+
 ## Local verification
 
 The repository includes `example.py` as a small async read-only example that uses credentials
