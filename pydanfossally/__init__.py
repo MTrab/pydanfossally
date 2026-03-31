@@ -469,6 +469,10 @@ class DanfossAlly:
         """Set the holiday schedule temperature for one device."""
         return await self._set_temperature_setting(device_id, temp, "holiday_setting")
 
+    async def set_pause_setting(self, device_id: str, temp: float) -> bool:
+        """Set the pause schedule temperature for one device."""
+        return await self._set_temperature_setting(device_id, temp, "pause_setting")
+
     async def set_external_temperature(
         self,
         device_id: str,

@@ -147,6 +147,7 @@ The client includes explicit helpers for several writable temperature-like setti
 - `set_at_home_setting(device_id, temp)`
 - `set_leaving_home_setting(device_id, temp)`
 - `set_holiday_setting(device_id, temp)`
+- `set_pause_setting(device_id, temp)`
 
 These helpers validate values before writing them:
 
@@ -165,6 +166,7 @@ await ally.set_lower_temp("device-1", 7.0)
 await ally.set_at_home_setting("device-1", 21.5)
 await ally.set_leaving_home_setting("device-1", 17.0)
 await ally.set_holiday_setting("device-1", 15.0)
+await ally.set_pause_setting("device-1", 8.0)
 
 await ally.refresh_device("device-1")
 device = ally.devices["device-1"]
@@ -174,6 +176,7 @@ print(device["lower_temp"])
 print(device["at_home_setting"])
 print(device["leaving_home_setting"])
 print(device["holiday_setting"])
+print(device["pause_setting"])
 ```
 
 Read access for these values is exposed through the parsed device state returned by
