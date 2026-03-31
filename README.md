@@ -37,8 +37,6 @@ ally = DanfossAlly(
     timeout=30,
     refresh_device_concurrency=5,
     refresh_device_min_interval=0.10,
-    device_discovery_interval=600,
-    degraded_refresh_cooldown=600,
     hot_refresh_timeout=300,
     user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
 )
@@ -70,8 +68,6 @@ async def main() -> None:
         timeout=30,
         refresh_device_concurrency=5,
         refresh_device_min_interval=0.10,
-        device_discovery_interval=600,
-        degraded_refresh_cooldown=600,
         hot_refresh_timeout=300,
         user_agent_prefix="HomeAssistant-DanfossAlly/2026.3.0",
     ) as ally:

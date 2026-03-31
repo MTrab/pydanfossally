@@ -12,8 +12,6 @@ from typing import Any
 
 from .const import (
     BOOLEAN_CODES,
-    DEGRADED_REFRESH_COOLDOWN,
-    DEVICE_DISCOVERY_INTERVAL,
     LOW_PRIORITY_DEVICE_TYPES,
     MODE_TO_SETPOINT_CODE,
     PASSTHROUGH_CODES,
@@ -167,8 +165,6 @@ class DanfossAlly:
         timeout: float = DEFAULT_TIMEOUT,
         refresh_device_concurrency: int = REFRESH_DEVICE_CONCURRENCY,
         refresh_device_min_interval: float = REFRESH_DEVICE_MIN_INTERVAL,
-        device_discovery_interval: float = DEVICE_DISCOVERY_INTERVAL,
-        degraded_refresh_cooldown: float = DEGRADED_REFRESH_COOLDOWN,
         hot_refresh_timeout: float = 300.0,
         user_agent_prefix: str | None = None,
     ) -> None:
@@ -177,10 +173,6 @@ class DanfossAlly:
             raise ValueError("refresh_device_concurrency must be at least 1")
         if refresh_device_min_interval < 0:
             raise ValueError("refresh_device_min_interval must be non-negative")
-        if device_discovery_interval < 0:
-            raise ValueError("device_discovery_interval must be non-negative")
-        if degraded_refresh_cooldown < 0:
-            raise ValueError("degraded_refresh_cooldown must be non-negative")
         if hot_refresh_timeout < 0:
             raise ValueError("hot_refresh_timeout must be non-negative")
 
@@ -194,19 +186,13 @@ class DanfossAlly:
         )
         self._refresh_device_concurrency = refresh_device_concurrency
         self._refresh_device_min_interval = refresh_device_min_interval
-        self._device_discovery_interval = device_discovery_interval
-        self._degraded_refresh_cooldown = degraded_refresh_cooldown
         self._hot_refresh_timeout = hot_refresh_timeout
         self._diagnostic_window = DIAGNOSTIC_WINDOW_SECONDS
         self._refresh_rate_lock = asyncio.Lock()
         self._next_refresh_slot = 0.0
-        self._next_device_discovery_at = 0.0
-        self._degraded_refresh_until = 0.0
-        self._status_refresh_recovery_limit: int | None = None
         self._status_refresh_unsupported: dict[str, float] = {}
         self._pending_hot_refresh: dict[str, dict[str, Any]] = {}
         self._skipped_refresh_times: dict[str, deque[float]] = defaultdict(deque)
-        self._degraded_mode_entry_times: deque[float] = deque()
 
     async def __aenter__(self) -> DanfossAlly:
         """Allow async context manager usage."""
@@ -275,7 +261,6 @@ class DanfossAlly:
 
             self._store_device(device, last_response_time=bulk_response_time)
 
-        self._schedule_next_device_discovery()
         self._prune_pending_hot_refreshes()
 
         _LOGGER.debug(
@@ -396,16 +381,6 @@ class DanfossAlly:
 
         await asyncio.gather(*(refresh_one(device_id) for device_id in device_ids))
         return self.devices
-
-    def _should_refresh_device_discovery(self) -> bool:
-        """Return whether periodic bulk discovery should run before device refresh."""
-        return asyncio.get_running_loop().time() >= self._next_device_discovery_at
-
-    def _schedule_next_device_discovery(self) -> None:
-        """Schedule the next bulk device discovery pass."""
-        self._next_device_discovery_at = (
-            asyncio.get_running_loop().time() + self._device_discovery_interval
-        )
 
     def _store_device_metadata(self, device: dict[str, Any]) -> dict[str, Any]:
         """Cache the raw device payload for future status merges."""
@@ -570,16 +545,8 @@ class DanfossAlly:
         _LOGGER.debug("Stored parsed state for device %s", device_id)
         return parsed
 
-    def _get_high_priority_refresh_candidates(self) -> list[str]:
-        """Return devices that should receive per-device refreshes."""
-        return [
-            device_id
-            for device_id in self.devices
-            if self._is_high_priority_device(device_id)
-        ]
-
     def _record_skipped_refresh(self, reason: str, count: int = 1) -> None:
-        """Count refreshes that were skipped by policy or cooldown."""
+        """Count refreshes that were skipped by refresh policy."""
         timestamps = self._skipped_refresh_times[reason]
         for _ in range(count):
             self._record_timestamp(timestamps)
@@ -627,39 +594,6 @@ class DanfossAlly:
             device_id in self._device_metadata
             and self._is_high_priority_device(device_id)
             and device_id not in self._status_refresh_unsupported
-        )
-
-    def _is_degraded_refresh_active(self) -> bool:
-        """Return whether per-device refreshes are temporarily disabled."""
-        return asyncio.get_running_loop().time() < self._degraded_refresh_until
-
-    def _enter_degraded_refresh_mode(self) -> None:
-        """Disable per-device refreshes until the cooldown elapses."""
-        loop = asyncio.get_running_loop()
-        now = loop.time()
-        self._degraded_refresh_until = (
-            max(now, self._degraded_refresh_until) + self._degraded_refresh_cooldown
-        )
-        self._status_refresh_recovery_limit = 1
-        self._record_timestamp(self._degraded_mode_entry_times)
-        _LOGGER.debug(
-            "Entering degraded refresh mode until %.3f after rate limiting",
-            self._degraded_refresh_until,
-        )
-        self._log_diagnostics("degraded refresh entry")
-
-    def _advance_status_refresh_recovery(self, total_candidates: int) -> None:
-        """Gradually restore per-device refresh breadth after cooldown."""
-        if self._status_refresh_recovery_limit is None or total_candidates < 1:
-            return
-        if self._is_degraded_refresh_active():
-            return
-        if self._status_refresh_recovery_limit >= total_candidates:
-            self._status_refresh_recovery_limit = None
-            return
-        self._status_refresh_recovery_limit = min(
-            total_candidates,
-            self._status_refresh_recovery_limit * 2,
         )
 
     def _mark_pending_hot_refresh(self, device_id: str) -> None:

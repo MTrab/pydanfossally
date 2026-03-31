@@ -854,12 +854,6 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
             DanfossAlly(refresh_device_min_interval=-0.1)
 
         with self.assertRaises(ValueError):
-            DanfossAlly(device_discovery_interval=-0.1)
-
-        with self.assertRaises(ValueError):
-            DanfossAlly(degraded_refresh_cooldown=-0.1)
-
-        with self.assertRaises(ValueError):
             DanfossAlly(hot_refresh_timeout=-0.1)
 
     async def test_refresh_devices_stops_hot_refresh_on_timeout(self) -> None:

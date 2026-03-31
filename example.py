@@ -14,8 +14,6 @@ async def main() -> None:
     async with DanfossAlly(
         refresh_device_concurrency=5,
         refresh_device_min_interval=0.10,
-        device_discovery_interval=600,
-        degraded_refresh_cooldown=600,
     ) as ally:
         authorized = await ally.initialize(environ["KEY"], environ["SECRET"])
         if not authorized:
