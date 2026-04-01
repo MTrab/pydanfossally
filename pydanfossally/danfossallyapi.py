@@ -259,7 +259,10 @@ class DanfossAllyAPI:
         if status_code == 400:
             mapped = BadRequestError()
         elif status_code == 401:
-            mapped = UnauthorizedError()
+            if path == TOKEN_PATH:
+                mapped = UnauthorizedError()
+            else:
+                mapped = APIError(f"Unauthorized response from endpoint: {path}")
         elif status_code == 403:
             mapped = ForbiddenError()
         elif status_code == 404:
