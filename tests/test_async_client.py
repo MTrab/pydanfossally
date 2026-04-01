@@ -13,10 +13,12 @@ from yarl import URL
 from pydanfossally import DanfossAlly, parse_device_data
 from pydanfossally.danfossallyapi import API_HOST, DanfossAllyAPI
 from pydanfossally.exceptions import (
+    APIError,
     BadRequestError,
     ForbiddenError,
     InternalServerError,
     RateLimitError,
+    UnauthorizedError,
 )
 
 
@@ -1391,6 +1393,30 @@ class DanfossAllyAsyncTests(unittest.IsolatedAsyncioTestCase):
         await ally.initialize("key", "secret")
 
         with self.assertRaises(ForbiddenError):
+            await ally.get_devices()
+
+    async def test_token_401_maps_to_unauthorized_exception(self) -> None:
+        """HTTP 401 should stay auth-specific for token requests."""
+
+        api = await self._make_api(lambda request: MockResponse(401))
+
+        with self.assertRaises(UnauthorizedError):
+            raise api._map_http_error(401, "/oauth2/token")
+
+    async def test_device_401_does_not_map_to_unauthorized_exception(self) -> None:
+        """HTTP 401 on device endpoints should avoid auth-specific mapping."""
+
+        def handler(request: MockRequest) -> MockResponse:
+            if request.url.path == "/oauth2/token":
+                return MockResponse(200, json_data=TOKEN_RESPONSE)
+            if request.url.path == "/ally/devices":
+                return MockResponse(401, json_data={"title": "User not found"})
+            raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+        ally = DanfossAlly(api=await self._make_api(handler))
+        await ally.initialize("key", "secret")
+
+        with self.assertRaises(APIError):
             await ally.get_devices()
 
     async def test_server_error_range_maps_to_domain_exception(self) -> None:
