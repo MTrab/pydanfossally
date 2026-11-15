@@ -50,5 +50,12 @@ MODE_TO_SETPOINT_CODE = {
     "holiday_sat": "at_home_setting",
 }
 
+# Zigbee int16 "invalid value" marker (0x8000). Thermostats that never had an
+# external room sensor can report it for the external temperature codes.
+INVALID_TEMPERATURE_RAW = -32768
+# Value the library exposes when no external temperature is set
+# (same as the documented "disable" writes of -8000 / -800).
+EXTERNAL_TEMPERATURE_DISABLED = -80.0
+
 REFRESH_DEVICE_CONCURRENCY = 5
 REFRESH_DEVICE_MIN_INTERVAL = 0.10

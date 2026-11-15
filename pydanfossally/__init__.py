@@ -12,6 +12,8 @@ from typing import Any
 
 from .const import (
     BOOLEAN_CODES,
+    EXTERNAL_TEMPERATURE_DISABLED,
+    INVALID_TEMPERATURE_RAW,
     LOW_PRIORITY_DEVICE_TYPES,
     MODE_TO_SETPOINT_CODE,
     PASSTHROUGH_CODES,
@@ -38,6 +40,14 @@ def _normalize_bool(value: Any) -> bool | None:
     if isinstance(value, str):
         return value.lower() == "true"
     return None
+
+
+def _parse_external_temperature(value: Any, divisor: int) -> float:
+    """Scale an external temperature, mapping the invalid marker to disabled."""
+    raw = float(value)
+    if raw == INVALID_TEMPERATURE_RAW:
+        return EXTERNAL_TEMPERATURE_DISABLED
+    return raw / divisor
 
 
 def parse_device_data(
@@ -86,8 +96,10 @@ def parse_device_data(
                 "floor_temp_max",
             }:
                 parsed[code] = float(value) / 10
-            elif code in {"local_temperature", "ext_measured_rs"}:
+            elif code == "local_temperature":
                 parsed[code] = float(value) / 100
+            elif code == "ext_measured_rs":
+                parsed[code] = _parse_external_temperature(value, 100)
             elif code == "humidity_value":
                 parsed["humidity"] = float(value) / 10
             elif code == "battery_percentage":
@@ -101,7 +113,9 @@ def parse_device_data(
             elif code == "LoadRadiatorRoomMean":
                 parsed["load_room_mean"] = value
             elif code == "sensor_avg_temp":
-                parsed["external_sensor_temperature"] = float(value) / 10
+                parsed["external_sensor_temperature"] = _parse_external_temperature(
+                    value, 10
+                )
             elif code in BOOLEAN_CODES:
                 normalized = _normalize_bool(value)
                 if normalized is not None:
