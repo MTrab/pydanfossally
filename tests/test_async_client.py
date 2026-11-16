@@ -1458,3 +1458,51 @@ class ParseDeviceDataTests(unittest.TestCase):
         parsed = parse_device_data(DEVICE_PAYLOAD, last_response_time=1773499838298)
 
         self.assertEqual(parsed["last_response_time"], 1773499838298)
+
+    def test_parse_device_data_maps_invalid_external_temperature_to_disabled(
+        self,
+    ) -> None:
+        """The Zigbee invalid marker (0x8000) must not surface as -327.68 degrees."""
+        parsed = parse_device_data(
+            {
+                "id": "device-1",
+                "name": "Hallway",
+                "status": [
+                    {"code": "ext_measured_rs", "value": -32768},
+                    {"code": "sensor_avg_temp", "value": -32768},
+                ],
+            }
+        )
+
+        self.assertEqual(parsed["ext_measured_rs"], -80.0)
+        self.assertEqual(parsed["external_sensor_temperature"], -80.0)
+
+    def test_parse_device_data_keeps_valid_and_disabled_external_temperature(
+        self,
+    ) -> None:
+        """Real readings and the documented disabled value keep their scaling."""
+        parsed = parse_device_data(
+            {
+                "id": "device-1",
+                "name": "Hallway",
+                "status": [
+                    {"code": "ext_measured_rs", "value": 2150},
+                    {"code": "sensor_avg_temp", "value": 215},
+                ],
+            }
+        )
+        disabled = parse_device_data(
+            {
+                "id": "device-2",
+                "name": "Bedroom",
+                "status": [
+                    {"code": "ext_measured_rs", "value": -8000},
+                    {"code": "sensor_avg_temp", "value": -800},
+                ],
+            }
+        )
+
+        self.assertEqual(parsed["ext_measured_rs"], 21.5)
+        self.assertEqual(parsed["external_sensor_temperature"], 21.5)
+        self.assertEqual(disabled["ext_measured_rs"], -80.0)
+        self.assertEqual(disabled["external_sensor_temperature"], -80.0)
